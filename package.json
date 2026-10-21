@@ -1,0 +1,84 @@
+{
+  "name": "agent-diff-review",
+  "displayName": "Agent Diff Review",
+  "description": "Review branch and worktree diffs, leave line comments, and send feedback to your existing coding agent session.",
+  "version": "0.1.2",
+  "publisher": "local-agent-tools",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.94.0",
+    "node": ">=20"
+  },
+  "categories": [
+    "SCM Providers",
+    "Other"
+  ],
+  "main": "./out/src/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
+  "contributes": {
+    "viewsContainers": { "activitybar": [{ "id": "agentDiffReviewContainer", "title": "Agent Diff Review", "icon": "resources/review.svg" }] },
+    "views": { "agentDiffReviewContainer": [{ "id": "agentDiffReview", "name": "Changes", "icon": "resources/review.svg", "contextualTitle": "Agent Diff Review" }] },
+    "viewsWelcome": [{ "view": "agentDiffReview", "contents": "Compare branches or worktrees to review changed files.\n[Start Comparison](command:agentDiffReview.compare)\n[Connect an agent session](command:agentDiffReview.connect)" }],
+    "commands": [
+      { "command": "agentDiffReview.compare", "title": "Start Comparison", "category": "Agent Diff Review", "icon": "$(git-compare)" },
+      { "command": "agentDiffReview.refresh", "title": "Refresh Comparison", "category": "Agent Diff Review", "icon": "$(refresh)" },
+      { "command": "agentDiffReview.fetch", "title": "Fetch Remote Branches", "category": "Agent Diff Review", "icon": "$(cloud-download)" },
+      { "command": "agentDiffReview.connect", "title": "Connect Agent", "category": "Agent Diff Review", "icon": "$(plug)" },
+      { "command": "agentDiffReview.selectAgent", "title": "Select Agent Session", "category": "Agent Diff Review", "icon": "$(plug)" },
+      { "command": "agentDiffReview.send", "title": "Send Review", "category": "Agent Diff Review", "icon": "$(send)", "enablement": "agentDiffReview.hasDrafts" },
+      { "command": "agentDiffReview.addComment", "title": "Comment on Selected Lines", "category": "Agent Diff Review", "enablement": "resourceScheme == agent-review" },
+      { "command": "agentDiffReview.openDiff", "title": "Open Diff" },
+      { "command": "agentDiffReview.showReview", "title": "Open Review Snapshot" },
+      { "command": "agentDiffReview.postComment", "title": "Add Comment", "enablement": "!commentIsEmpty" },
+      { "command": "agentDiffReview.deleteComment", "title": "Delete Draft", "icon": "$(trash)" },
+      { "command": "agentDiffReview.resolveThread", "title": "Resolve / Reopen", "icon": "$(check)" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "agentDiffReview.compare", "when": "view == agentDiffReview", "group": "navigation@1" },
+        { "command": "agentDiffReview.refresh", "when": "view == agentDiffReview && agentDiffReview.hasReview", "group": "navigation@2" },
+        { "command": "agentDiffReview.send", "when": "view == agentDiffReview && agentDiffReview.hasReview", "group": "navigation@3" },
+        { "command": "agentDiffReview.selectAgent", "when": "view == agentDiffReview", "group": "1_session@1" },
+        { "command": "agentDiffReview.fetch", "when": "view == agentDiffReview", "group": "2_git" },
+        { "command": "agentDiffReview.connect", "when": "view == agentDiffReview", "group": "1_session@2" }
+      ],
+      "editor/context": [{ "command": "agentDiffReview.addComment", "when": "resourceScheme == agent-review", "group": "review" }],
+      "comments/commentThread/context": [{ "command": "agentDiffReview.postComment", "when": "commentController == agent-diff-review", "group": "inline" }],
+      "comments/commentThread/title": [{ "command": "agentDiffReview.resolveThread", "when": "commentController == agent-diff-review && !commentThreadIsEmpty", "group": "navigation" }],
+      "comments/comment/title": [{ "command": "agentDiffReview.deleteComment", "when": "commentController == agent-diff-review && comment == draft", "group": "navigation" }],
+      "commandPalette": [
+        { "command": "agentDiffReview.openDiff", "when": "false" },
+        { "command": "agentDiffReview.showReview", "when": "false" },
+        { "command": "agentDiffReview.postComment", "when": "false" },
+        { "command": "agentDiffReview.deleteComment", "when": "false" },
+        { "command": "agentDiffReview.resolveThread", "when": "false" }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -p . --watch",
+    "test": "npm run compile && node --test out/test/*.test.js",
+    "test:extension": "npm run compile && node scripts/test-extension.cjs",
+    "package": "vsce package --allow-missing-repository",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/vscode": "^1.94.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^4.0.0",
+    "typescript": "^5.9.3"
+  }
+}

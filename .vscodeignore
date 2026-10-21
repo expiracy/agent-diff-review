@@ -1,0 +1,12 @@
+.vscode/**
+.vscode-test/**
+src/**
+test/**
+out/test/**
+out/**/*.map
+scripts/**
+node_modules/**
+tsconfig.json
+TEST-SCENARIOS.md
+package-lock.json
+*.vsix
