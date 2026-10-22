@@ -6,12 +6,20 @@ The first version uses a local bridge and a dependency-free Node.js script. The 
 
 **Try it**
 
-1. In VS Code, run **Extensions: Install from VSIX…** and select `agent-diff-review-0.1.2.vsix` from this project.
-2. Open a trusted Git repository. Click the **Agent Diff Review** activity-bar icon, then **Start Comparison**.
-3. Choose the left and right sources. Pick **Exact differences**, or **Changes since common ancestor** when the left source is a branch/commit. Remote branches reflect the last fetch; **Fetch Remote Branches** updates them explicitly.
+1. In VS Code, run **Extensions: Install from VSIX…** and select `agent-diff-review-0.2.0.vsix` from this project.
+2. Open a trusted Git repository and click the **Agent Diff Review** activity-bar icon. The **Comparison** panel keeps the left and right sources visible above the changed files.
+3. Click **Base · left side** or **Compare · right side** to choose a branch, worktree, or revision. Choose **Exact differences** to compare the selected states directly, or **Branch changes** to see changes introduced on the right since the common ancestor. Use **⇄** to swap sides, then **Compare** or **Apply Comparison** to update the diff. An unapplied selection leaves the shown comparison clearly labelled. Remote branches reflect the last fetch; **Fetch Remote Branches** updates them explicitly.
 4. Expand folders in **Changes** and open a changed file. The tree uses your VS Code file icon theme, with A/M/D badges for added, modified, and deleted files. Hover in the comment gutter or select lines and use **Agent Diff Review: Comment on Selected Lines** from the editor context menu. **Add Comment** saves a draft. Removed lines can be commented on in the left pane.
-5. Run **Agent Diff Review: Connect Agent**. It opens the bundled skill and copies a message to paste into your existing agent session. Ask that agent to follow the skill. When its script connects, use **… → Select Agent Session** in the sidebar if more than one is available. The selected session appears above the file tree.
-6. Click **Send Review** and optionally add an overall instruction. The agent's waiting command receives the comments and captured code. Its replies appear in the comment threads. You control resolution.
+5. Click **Connect an agent…** in Comparison, or run **Agent Diff Review: Connect Agent**. It opens the bundled skill and copies a message to paste into your existing agent session. Ask that agent to follow the skill. Use **… → Select Agent Session** to choose among connected sessions. The selected session appears in Comparison.
+6. Use **Send Review** in **Comments** and optionally add an overall instruction. The agent's waiting command receives the comments and captured code. Comments from older snapshots can be sent from their context menu; when several snapshots have drafts, Send Review lets you choose which one to send.
+
+**Reviewing fixes and following up**
+
+The **Comments** view keeps feedback from every snapshot in one place. Drafts, comments waiting for an agent, replies ready to review, items you mark as needing changes, and resolved comments appear in separate groups. Expand a comment to read its agent replies. **Find Review Comment** searches comment text, file names, and replies.
+
+Select a comment to open its saved diff on the original left or modified right lines. Earlier snapshots are labelled so their line numbers remain meaningful. Use the comment's **Review Latest Changes** action to capture the latest saved state and inspect the file again. If the file no longer differs, the current working file opens when available; the original feedback stays in Comments.
+
+Mark a comment **Resolved** once you are satisfied, or **Needs Changes** to keep it in the follow-up queue. Marking Needs Changes tracks your assessment; add a follow-up comment in the diff and send that draft to request more work from the agent. Refreshing or checking the latest code never resolves comments automatically.
 
 **Why a script and skill?**
 
@@ -38,7 +46,7 @@ The bridge listens only on `127.0.0.1` and requires a token from a private regis
 **Scope of version 0.1**
 
 - Comparisons use **saved files**. Save editor changes before starting or refreshing a comparison.
-- Reviews are immutable. Refresh creates a new review; earlier comments remain with their original code under **Previous reviews**. Comments do not move automatically between versions.
+- Reviews are immutable. Refresh creates a new review; earlier comments remain in **Comments** with their original code, and earlier file snapshots remain under **Previous reviews**. Comments do not move automatically between versions.
 - Worktree comparisons include tracked and non-ignored untracked files. They show final working-file contents, rather than a separate staging-area view. Renames appear as a deletion and an addition.
 - An agent must be attached to the target worktree. For a branch/commit target, its worktree HEAD must match the reviewed commit.
 - Text previews are limited to 512 KiB per file and 16 MiB per review; submitted batches are limited to 4 MiB. Binary/non-UTF-8 files are listed without line comments. Submodules show commit pointers, not changes inside their working directories.

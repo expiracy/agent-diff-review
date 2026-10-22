@@ -30,6 +30,17 @@ test('saves original-side line comments with their immutable reviewed code', asy
   assert.equal(store.state.notes[0].body, 'Keep this validation.');
 });
 
+test('persists a reviewer marking a comment as needing more changes', async t => {
+  const store = await storeFixture(t);
+  await store.addReview(sampleReview());
+  const note = await store.addNote('review-one', 'file.ts', 'after', 1, 1, 'Handle an empty input.');
+  await store.markNeedsChanges(note.id, true);
+  const reloaded = new ReviewStore(store.filename);
+  await reloaded.load();
+  assert.equal(reloaded.state.notes[0].needsChanges, true);
+  assert.equal(reloaded.state.notes[0].resolved, false);
+});
+
 test('redelivers queued feedback after restart until its intended connection acknowledges it', async t => {
   const store = await storeFixture(t);
   await store.addReview(sampleReview());

@@ -5,6 +5,10 @@ import { compare, listEndpoints, repositoryInfo, runGit, type Comparison, type E
 import { ReviewStore, type Note, type Connection } from './review.ts';
 import { comparisonOptions, sendOptions, type CompareOptions } from './command-options.ts';
 import { buildFileTree, type FileTreeNode } from './file-tree.ts';
+import { CommentsView } from './comments-view.ts';
+import { ComparisonView } from './comparison-view.ts';
+import { comparisonSources, endpointLabel, matchesComparison, swapComparison } from './comparison-selection.ts';
+import { COMMENT_STATES, commentStatus } from './comment-workflow.ts';
 
 const SCHEME = 'agent-review';
 const CONTROLLER = 'agent-diff-review';
@@ -26,12 +30,17 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
   readonly output = vscode.window.createOutputChannel('Agent Diff Review');
   readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 20);
   readonly tree: vscode.TreeView<TreeEntry>;
+  readonly comments = new CommentsView();
+  readonly comparison: ComparisonView;
   store?: ReviewStore;
   bridge?: Bridge;
   repository?: { root: string; commonDir: string };
   private selectedConnection?: string;
   private initializing?: Promise<void>;
   private sending = false;
+  private comparing = false;
+  private selection?: CompareOptions;
+  private selectedReviewId?: string;
 
   constructor(readonly context: vscode.ExtensionContext) {
     this.selectedConnection = context.workspaceState.get<string>('selectedConnection');
@@ -42,10 +51,12 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
         return entry && !entry.file.omitted ? [new vscode.Range(0, 0, document.lineCount - 1, 0)] : [];
       }
     };
-    this.status.command = 'agentDiffReview.focus';
+    this.status.command = 'agentDiffReview.showComments';
     this.status.name = 'Agent Diff Review';
     this.tree = vscode.window.createTreeView('agentDiffReview', { treeDataProvider: this, showCollapseAll: true });
-    context.subscriptions.push(this.changed, this.decorationsChanged, this.controller, this.output, this.status, this.tree,
+    this.comparison = new ComparisonView(context.extensionUri, message => this.handleComparisonAction(message));
+    context.subscriptions.push(this.changed, this.decorationsChanged, this.controller, this.output, this.status, this.tree, this.comments, this.comparison,
+      vscode.window.registerWebviewViewProvider('agentDiffReview.comparison', this.comparison),
       vscode.window.registerFileDecorationProvider(this),
       vscode.workspace.registerTextDocumentContentProvider(SCHEME, this));
     const register = (id: string, callback: (...args: any[]) => unknown) => context.subscriptions.push(vscode.commands.registerCommand(`agentDiffReview.${id}`, async (...args) => {
@@ -74,6 +85,15 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     register('deleteComment', (comment: ReviewComment) => this.store!.deleteNote(comment.noteId!));
     register('resolveThread', (thread: vscode.CommentThread) => this.resolveThread(thread));
     register('addComment', () => this.commentAtSelection());
+    register('openComment', argument => this.openComment(this.noteFromArgument(argument).id));
+    register('showComments', () => vscode.commands.executeCommand('agentDiffReview.comments.focus'));
+    register('findComment', () => this.findComment());
+    register('resolveComment', argument => this.store!.resolveNotes([this.noteFromArgument(argument).id], true));
+    register('reopenComment', argument => this.store!.resolveNotes([this.noteFromArgument(argument).id], false));
+    register('markNeedsChanges', argument => this.store!.markNeedsChanges(this.noteFromArgument(argument).id, true));
+    register('clearNeedsChanges', argument => this.store!.markNeedsChanges(this.noteFromArgument(argument).id, false));
+    register('reviewLatestComment', argument => this.reviewLatestComment(this.noteFromArgument(argument).id));
+    register('sendCommentReview', argument => this.send(undefined, this.noteFromArgument(argument).reviewId));
   }
 
   async initialize(): Promise<void> {
@@ -98,7 +118,14 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     await bridge.start();
     this.store = store;
     this.bridge = bridge;
-    const update = () => { this.syncThreads(); this.changed.fire(undefined); this.decorationsChanged.fire(undefined); this.updateStatus(); };
+    if (!this.currentReview) {
+      const branch = (await runGit(this.repository.root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => Buffer.from(''))).toString().trim();
+      this.selection = {
+        base: { kind: 'ref', value: branch ? `refs/heads/${branch}` : 'HEAD', label: branch || 'HEAD' },
+        target: { kind: 'worktree', value: this.repository.root, label: 'Working tree' }, mode: 'exact'
+      };
+    }
+    const update = () => { this.syncThreads(); this.changed.fire(undefined); this.decorationsChanged.fire(undefined); this.comments.update(store.state); this.updateStatus(); };
     store.events.on('change', update);
     this.context.subscriptions.push({ dispose: () => { store.events.off('change', update); } });
     update();
@@ -140,15 +167,16 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     return new vscode.FileDecoration(decoration.badge, decoration.label, new vscode.ThemeColor(decoration.color));
   }
 
-  private async pickEndpoint(title: string): Promise<Endpoint | undefined> {
+  private async pickEndpoint(title: string, current?: Endpoint): Promise<Endpoint | undefined> {
     const endpoints = await listEndpoints(this.repository!.root);
     const choices = endpoints.map(endpoint => ({
-      label: endpoint.kind === 'worktree' ? `$(folder) ${endpoint.label}` : `$(git-branch) ${endpoint.label}`,
+      label: endpoint.kind === 'worktree' ? `$(folder) ${endpointLabel(endpoint)}` : `$(git-branch) ${endpoint.label}`,
       description: endpoint.kind === 'worktree' ? 'Saved working files, including untracked files' : endpoint.value.startsWith('refs/remotes/') ? 'Remote-tracking branch (last fetched)' : 'Local branch',
+      detail: endpoint.value,
       endpoint
     }));
     const custom = { label: '$(edit) Enter a commit or ref…', description: 'For example HEAD, a tag, or a commit SHA', endpoint: undefined };
-    const selected = await vscode.window.showQuickPick([...choices, custom], { title, matchOnDescription: true });
+    const selected = await vscode.window.showQuickPick([...choices, custom], { title, placeHolder: current ? `Current: ${endpointLabel(current)}. Choose a branch or working tree.` : 'Choose a branch or working tree', matchOnDescription: true, matchOnDetail: true });
     if (!selected) return undefined;
     if (selected.endpoint) return selected.endpoint;
     const value = await vscode.window.showInputBox({ title, prompt: 'Git commit or ref', value: 'HEAD' });
@@ -157,31 +185,40 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
 
   async startComparison(options?: CompareOptions): Promise<Comparison | undefined> {
     await this.ensureRepository();
-    let selected = options;
-    if (!selected) {
-      const base = await this.pickEndpoint('Compare from (left side)');
-      if (!base) return;
-      const target = await this.pickEndpoint('Compare to (right side)');
-      if (!target) return;
-      const mode = base.kind === 'ref' ? await vscode.window.showQuickPick([
-        { label: 'Exact differences', mode: 'exact' as const, description: 'Compare the two selected states directly' },
-        { label: 'Changes since common ancestor', mode: 'merge-base' as const, description: 'Review changes introduced on the target branch/worktree' }
-      ], { title: 'Comparison mode' }) : { mode: 'exact' as const };
-      if (!mode) return;
-      selected = { base, target, mode: mode.mode };
-    }
-    const review = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Preparing review snapshots…' }, () => compare(this.repository!.root, selected!.base, selected!.target, selected!.mode));
-    await this.store!.addReview(review);
-    await vscode.commands.executeCommand('agentDiffReview.focus');
-    if (!review.files.length) void vscode.window.showInformationMessage('No differences between the selected states.');
-    return review;
+    if (!options) { await vscode.commands.executeCommand('agentDiffReview.comparison.focus'); return; }
+    if (this.comparing) return;
+    this.comparing = true;
+    this.updateStatus();
+    try {
+      const review = await vscode.window.withProgress({ location: { viewId: 'agentDiffReview' }, title: 'Preparing review snapshots…' }, () => compare(this.repository!.root, options.base, options.target, options.mode));
+      await this.store!.addReview(review);
+      await vscode.commands.executeCommand('agentDiffReview.focus');
+      return review;
+    } finally { this.comparing = false; this.updateStatus(); }
+  }
+
+  async handleComparisonAction(argument: unknown): Promise<void> {
+    if (!argument || typeof argument !== 'object' || this.comparing) return;
+    const message = argument as { action?: unknown; side?: unknown; mode?: unknown };
+    if (!['pick', 'mode', 'swap', 'compare', 'agent'].includes(String(message.action))) return;
+    await this.ensureRepository();
+    if (!this.selection) return;
+    if (message.action === 'pick' && (message.side === 'base' || message.side === 'target')) {
+      const side = message.side;
+      const endpoint = await this.pickEndpoint(side === 'base' ? 'Base · left side' : 'Compare · right side', this.selection[side]);
+      if (endpoint) this.selection = { ...this.selection, [side]: endpoint, mode: side === 'base' && endpoint.kind === 'worktree' ? 'exact' : this.selection.mode };
+    } else if (message.action === 'mode' && (message.mode === 'exact' || message.mode === 'merge-base')) {
+      if (message.mode === 'exact' || this.selection.base.kind === 'ref') this.selection = { ...this.selection, mode: message.mode };
+    } else if (message.action === 'swap') this.selection = swapComparison(this.selection);
+    else if (message.action === 'compare') await this.startComparison(this.selection);
+    else if (message.action === 'agent') await this.selectAgent();
+    this.updateStatus();
   }
 
   private async refresh(): Promise<void> {
     const review = this.currentReview;
     if (!review) { await this.startComparison(); return; }
-    await this.startComparison({ base: review.sourceBase ?? review.base, target: review.sourceTarget ?? review.target, mode: review.mode });
-    void vscode.window.showInformationMessage('Created a fresh review snapshot. Earlier comments remain attached to the earlier review under Previous reviews.');
+    await this.startComparison(comparisonSources(review));
   }
 
   async openDiff(reviewId: string, filePath: string): Promise<void> {
@@ -190,16 +227,77 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     await vscode.commands.executeCommand(command.command, ...command.arguments!);
   }
 
-  private endpointLabel(endpoint: Endpoint): string {
-    return endpoint.kind === 'worktree' ? endpoint.label.split(' · ')[0] : endpoint.label;
-  }
-
   private diffCommand(review: Comparison, filePath: string, preview: boolean): vscode.Command {
     const suffix = review.mode === 'merge-base' ? ' (since common ancestor)' : '';
+    const earlier = review.id !== this.currentReview?.id ? ' · Earlier snapshot' : '';
     return {
       command: 'vscode.diff', title: 'Open Diff',
-      arguments: [this.uri(review.id, filePath, 'before'), this.uri(review.id, filePath, 'after'), `${path.posix.basename(filePath)} · ${this.endpointLabel(review.base)} → ${this.endpointLabel(review.target)}${suffix}`, { preview }]
+      arguments: [this.uri(review.id, filePath, 'before'), this.uri(review.id, filePath, 'after'), `${path.posix.basename(filePath)} · ${endpointLabel(review.base)} → ${endpointLabel(review.target)}${suffix}${earlier}`, { preview }]
     };
+  }
+
+  private noteFromArgument(argument: unknown): Note {
+    const id = typeof argument === 'string' ? argument : argument && typeof argument === 'object' && 'noteId' in argument ? argument.noteId : undefined;
+    const note = this.store?.state.notes.find(note => note.id === id);
+    if (!note) throw new Error('Comment not found.');
+    return note;
+  }
+
+  async openComment(noteId: string): Promise<void> {
+    const note = this.noteFromArgument(noteId);
+    const uri = this.uri(note.reviewId, note.filePath, note.side);
+    const document = await vscode.workspace.openTextDocument(uri);
+    const range = new vscode.Range(note.startLine - 1, 0, note.endLine - 1, document.lineAt(note.endLine - 1).text.length);
+    const thread = this.threads.get(this.threadKey(note));
+    if (thread) thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
+    await this.openDiff(note.reviewId, note.filePath);
+    let finishFocus!: () => void;
+    const focused = new Promise<void>(resolve => {
+      const listener = vscode.window.onDidChangeActiveTextEditor(editor => {
+        if (editor?.document.uri.toString() === uri.toString()) finishFocus();
+      });
+      const timeout = setTimeout(() => finishFocus(), 1000);
+      finishFocus = () => { listener.dispose(); clearTimeout(timeout); resolve(); };
+    });
+    try {
+      await vscode.commands.executeCommand(note.side === 'before' ? 'workbench.action.compareEditor.focusSecondarySide' : 'workbench.action.compareEditor.focusPrimarySide', this.uri(note.reviewId, note.filePath, 'after'));
+      if (vscode.window.activeTextEditor?.document.uri.toString() !== uri.toString()) await focused;
+    } finally { finishFocus(); }
+    const editor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
+    if (!editor || vscode.window.activeTextEditor?.document.uri.toString() !== uri.toString()) { await vscode.window.showTextDocument(uri, { selection: range, preview: false }); return; }
+    editor.selection = new vscode.Selection(range.start, range.end);
+    editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+  }
+
+  private async findComment(): Promise<void> {
+    await this.ensureRepository();
+    const choices = this.store!.state.notes.slice().reverse().map(note => {
+      const state = COMMENT_STATES.find(state => state.id === commentStatus(note))!;
+      const review = this.store!.review(note.reviewId);
+      const snapshot = note.reviewId === this.currentReview?.id ? 'Current snapshot' : `Earlier snapshot · ${new Date(review.createdAt).toLocaleString()}`;
+      const detail = `${endpointLabel(review.base)} → ${endpointLabel(review.target)} · ${snapshot}${note.replies.length ? `\n${note.replies.map(reply => reply.body).join('\n\n')}` : ''}`;
+      return { label: `$(${state.icon}) ${note.body.replace(/\s+/g, ' ')}`, description: `${note.filePath}:${note.startLine} · ${state.label}`, detail, noteId: note.id };
+    });
+    const choice = await vscode.window.showQuickPick(choices, { title: 'Find a Review Comment', placeHolder: 'Search all comments, files, and agent replies', matchOnDescription: true, matchOnDetail: true });
+    if (!choice) return;
+    await this.comments.reveal(choice.noteId);
+    await this.openComment(choice.noteId);
+  }
+
+  async reviewLatestComment(noteId: string): Promise<void> {
+    const note = this.noteFromArgument(noteId);
+    const previous = this.store!.review(note.reviewId);
+    const latest = await this.startComparison(comparisonSources(previous));
+    if (!latest) return;
+    if (latest.files.some(file => file.path === note.filePath)) await this.openDiff(latest.id, note.filePath);
+    else {
+      if (latest.target.kind === 'worktree') {
+        const uri = vscode.Uri.file(path.join(latest.target.value, note.filePath));
+        try { await vscode.workspace.fs.stat(uri); await vscode.window.showTextDocument(uri, { preview: false }); }
+        catch (error) { if (!(error instanceof vscode.FileSystemError) || error.code !== 'FileNotFound') throw error; }
+      }
+      void vscode.window.showInformationMessage(`${note.filePath} has no remaining differences in this comparison. Its original comment is still available in Comments.`);
+    }
   }
 
   async postComment(reply: vscode.CommentReply): Promise<Note> {
@@ -247,7 +345,7 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
         const batch = this.store!.state.batches.find(batch => batch.id === note.batchId);
         const comment: ReviewComment = {
           body: note.body, mode: vscode.CommentMode.Preview, author: { name: 'You' }, noteId: note.id,
-          contextValue: note.batchId ? 'sent' : 'draft', label: !note.batchId ? 'Draft' : batch?.acknowledgedAt ? 'Received by agent' : 'Queued for agent'
+          contextValue: note.batchId ? 'sent' : 'draft', label: note.needsChanges && !note.resolved ? 'Needs changes' : !note.batchId ? 'Draft' : batch?.acknowledgedAt ? 'Received by agent' : 'Queued for agent'
         };
         return [comment, ...note.replies.map(reply => ({ body: reply.body, mode: vscode.CommentMode.Preview, author: { name: 'Agent' }, contextValue: 'agent' }))];
       });
@@ -290,12 +388,26 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     void vscode.window.showInformationMessage('Connection instructions copied. Paste them into the existing agent session.');
   }
 
-  async send(options?: { connectionId: string; instruction?: string }) {
+  async send(options?: { connectionId: string; instruction?: string }, reviewId?: string) {
     if (this.sending) return;
     this.sending = true;
     try {
       await this.ensureRepository();
-      const review = this.currentReview;
+      let review = reviewId ? this.store!.review(reviewId) : this.currentReview;
+      if (!options && !reviewId) {
+        const drafts = this.store!.state.notes.filter(note => !note.batchId && !note.resolved);
+        const reviews = this.store!.state.reviews.filter(review => drafts.some(note => note.reviewId === review.id));
+        if (reviews.length === 1) review = reviews[0];
+        else if (reviews.length > 1) {
+          const choice = await vscode.window.showQuickPick(reviews.map(review => ({
+            label: `${endpointLabel(review.base)} → ${endpointLabel(review.target)}`,
+            description: `${drafts.filter(note => note.reviewId === review.id).length} drafts · ${review.id === this.currentReview?.id ? 'Current snapshot' : 'Earlier snapshot'}`,
+            detail: new Date(review.createdAt).toLocaleString(), review
+          })), { title: 'Send comments from which review?', matchOnDescription: true });
+          if (!choice) return;
+          review = choice.review;
+        }
+      }
       if (!review) throw new Error('Start a comparison and add comments first.');
       const connection = options ? this.store!.connection(options.connectionId) : this.activeConnection() ?? await this.selectAgent();
       if (!connection) return;
@@ -352,14 +464,24 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
   private updateStatus(): void {
     const review = this.currentReview;
     const connection = this.activeConnection();
-    const drafts = this.store!.state.notes.filter(note => note.reviewId === this.currentReview?.id && !note.batchId && !note.resolved).length;
+    if (review && review.id !== this.selectedReviewId) {
+      this.selectedReviewId = review.id;
+      this.selection = comparisonSources(review);
+    }
+    const drafts = this.store!.state.notes.filter(note => !note.batchId && !note.resolved).length;
+    const open = this.store!.state.notes.filter(note => !note.resolved).length;
+    this.comparison.update({
+      selection: this.selection, repository: this.repository?.root, agent: connection?.label,
+      showing: review ? { base: endpointLabel(review.base), target: endpointLabel(review.target), files: review.files.length, createdAt: review.createdAt } : undefined,
+      dirty: !!review && !!this.selection && !matchesComparison(this.selection, review), busy: this.comparing
+    });
     void vscode.commands.executeCommand('setContext', 'agentDiffReview.hasReview', !!review);
     void vscode.commands.executeCommand('setContext', 'agentDiffReview.hasDrafts', drafts > 0);
     this.tree.description = review ? `${review.files.length} file${review.files.length === 1 ? '' : 's'}` : undefined;
     this.tree.badge = review?.files.length ? { value: review.files.length, tooltip: this.tree.description! } : undefined;
-    this.tree.message = review ? `${review.files.length ? '' : 'No changed files.\n'}${this.endpointLabel(review.base)} → ${this.endpointLabel(review.target)}\n${review.mode === 'exact' ? 'Exact comparison' : 'Since common ancestor'} · ${connection ? `Agent: ${connection.label}` : 'No agent selected'}` : undefined;
+    this.tree.message = review ? `${review.files.length ? '' : 'No changed files.\n'}${endpointLabel(review.base)} → ${endpointLabel(review.target)}\n${review.mode === 'exact' ? 'Exact comparison' : 'Branch changes'} · ${connection ? `Agent: ${connection.label}` : 'No agent selected'}` : undefined;
     if (!review) { this.status.hide(); return; }
-    this.status.text = `$(comment-discussion) Review${drafts ? `: ${drafts} draft${drafts === 1 ? '' : 's'}` : ''}`;
+    this.status.text = `$(comment-discussion) Review${drafts ? `: ${drafts} draft${drafts === 1 ? '' : 's'}` : open ? `: ${open} open` : ''}`;
     this.status.tooltip = `${review.base.label} → ${review.target.label}\n${connection ? `Agent: ${connection.label}` : 'No agent selected'}`;
     this.status.show();
   }

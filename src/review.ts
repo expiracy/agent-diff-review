@@ -16,6 +16,7 @@ export interface Note {
   createdAt: string;
   batchId?: string;
   resolved: boolean;
+  needsChanges?: boolean;
   replies: { body: string; createdAt: string }[];
 }
 
@@ -196,5 +197,14 @@ export class ReviewStore {
 
   async resolveNotes(ids: string[], resolved: boolean): Promise<void> {
     await this.change(draft => { for (const note of draft.notes) if (ids.includes(note.id)) note.resolved = resolved; });
+  }
+
+  async markNeedsChanges(id: string, needsChanges: boolean): Promise<void> {
+    await this.change(draft => {
+      const note = draft.notes.find(note => note.id === id);
+      if (!note) throw new Error('Comment not found.');
+      note.needsChanges = needsChanges;
+      if (needsChanges) note.resolved = false;
+    });
   }
 }
