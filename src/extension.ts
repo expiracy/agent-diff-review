@@ -478,7 +478,6 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     void vscode.commands.executeCommand('setContext', 'agentDiffReview.hasReview', !!review);
     void vscode.commands.executeCommand('setContext', 'agentDiffReview.hasDrafts', drafts > 0);
     this.tree.description = review ? `${review.files.length} file${review.files.length === 1 ? '' : 's'}` : undefined;
-    this.tree.badge = review?.files.length ? { value: review.files.length, tooltip: this.tree.description! } : undefined;
     this.tree.message = review ? `${review.files.length ? '' : 'No changed files.\n'}${endpointLabel(review.base)} → ${endpointLabel(review.target)}\n${review.mode === 'exact' ? 'Exact comparison' : 'Branch changes'} · ${connection ? `Agent: ${connection.label}` : 'No agent selected'}` : undefined;
     if (!review) { this.status.hide(); return; }
     this.status.text = `$(comment-discussion) Review${drafts ? `: ${drafts} draft${drafts === 1 ? '' : 's'}` : open ? `: ${open} open` : ''}`;

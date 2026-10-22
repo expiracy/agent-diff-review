@@ -68,6 +68,8 @@ export async function run(): Promise<void> {
   const draftGroup = api.comments.getChildren()[0];
   assert.equal(draftGroup?.label, 'Drafts', 'All inline comments appear together in the Comments view');
   assert.equal(api.comments.getChildren(draftGroup).length, 2);
+  const activityCount = (api.tree.badge?.value ?? 0) + (api.comments.tree.badge?.value ?? 0);
+  assert.equal(activityCount, notes.length, 'The activity badge counts open feedback without mixing in changed files');
   await vscode.commands.executeCommand('agentDiffReview.openComment', notes[0].id);
   assert.equal(vscode.window.activeTextEditor?.document.uri.toString(), api.uri(review.id, 'example.ts', 'before').toString(), 'A comment opens its exact diff side');
   assert.equal(vscode.window.activeTextEditor?.selection.start.line, 1, 'The original-side comment range is selected');
@@ -142,5 +144,5 @@ export async function run(): Promise<void> {
   await vscode.commands.executeCommand('agentDiffReview.comparison.focus');
   console.log('VS Code integration assertions passed.');
   const pause = Number(process.env.AGENT_DIFF_REVIEW_TEST_PAUSE ?? 0);
-  if (pause > 0) await new Promise(resolve => setTimeout(resolve, Math.min(pause, 45_000)));
+  if (pause > 0) await new Promise(resolve => setTimeout(resolve, Math.min(pause, 120_000)));
 }

@@ -6,12 +6,14 @@ The first version uses a local bridge and a dependency-free Node.js script. The 
 
 **Try it**
 
-1. In VS Code, run **Extensions: Install from VSIX…** and select `agent-diff-review-0.2.0.vsix` from this project.
+1. In VS Code, run **Extensions: Install from VSIX…** and select `agent-diff-review-0.2.1.vsix` from this project.
 2. Open a trusted Git repository and click the **Agent Diff Review** activity-bar icon. The **Comparison** panel keeps the left and right sources visible above the changed files.
 3. Click **Base · left side** or **Compare · right side** to choose a branch, worktree, or revision. Choose **Exact differences** to compare the selected states directly, or **Branch changes** to see changes introduced on the right since the common ancestor. Use **⇄** to swap sides, then **Compare** or **Apply Comparison** to update the diff. An unapplied selection leaves the shown comparison clearly labelled. Remote branches reflect the last fetch; **Fetch Remote Branches** updates them explicitly.
 4. Expand folders in **Changes** and open a changed file. The tree uses your VS Code file icon theme, with A/M/D badges for added, modified, and deleted files. Hover in the comment gutter or select lines and use **Agent Diff Review: Comment on Selected Lines** from the editor context menu. **Add Comment** saves a draft. Removed lines can be commented on in the left pane.
 5. Click **Connect an agent…** in Comparison, or run **Agent Diff Review: Connect Agent**. It opens the bundled skill and copies a message to paste into your existing agent session. Ask that agent to follow the skill. Use **… → Select Agent Session** to choose among connected sessions. The selected session appears in Comparison.
 6. Use **Send Review** in **Comments** and optionally add an overall instruction. The agent's waiting command receives the comments and captured code. Comments from older snapshots can be sent from their context menu; when several snapshots have drafts, Send Review lets you choose which one to send.
+
+New workspace layouts give Comparison room for its controls. VS Code keeps panel sizes you have already saved; drag the divider below Comparison to resize an existing layout. The activity-bar badge counts open comments, while the Changes heading shows the file count.
 
 **Reviewing fixes and following up**
 

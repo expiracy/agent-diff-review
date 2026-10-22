@@ -2,7 +2,7 @@
   "name": "agent-diff-review",
   "displayName": "Agent Diff Review",
   "description": "Review branch and worktree diffs, leave line comments, and send feedback to your existing coding agent session.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "local-agent-tools",
   "license": "MIT",
   "private": true,
@@ -29,9 +29,9 @@
   "contributes": {
     "viewsContainers": { "activitybar": [{ "id": "agentDiffReviewContainer", "title": "Agent Diff Review", "icon": "resources/review.svg" }] },
     "views": { "agentDiffReviewContainer": [
-      { "id": "agentDiffReview.comparison", "name": "Comparison", "type": "webview", "icon": "resources/review.svg", "contextualTitle": "Agent Diff Review" },
-      { "id": "agentDiffReview", "name": "Changes", "icon": "resources/review.svg", "contextualTitle": "Agent Diff Review" },
-      { "id": "agentDiffReview.comments", "name": "Comments", "icon": "resources/review.svg", "contextualTitle": "Agent Diff Review" }
+      { "id": "agentDiffReview.comparison", "name": "Comparison", "type": "webview", "icon": "resources/review.svg", "contextualTitle": "Agent Diff Review", "initialSize": 45 },
+      { "id": "agentDiffReview", "name": "Changes", "icon": "resources/review.svg", "contextualTitle": "Agent Diff Review", "initialSize": 30 },
+      { "id": "agentDiffReview.comments", "name": "Comments", "icon": "resources/review.svg", "contextualTitle": "Agent Diff Review", "initialSize": 25 }
     ] },
     "viewsWelcome": [
       { "view": "agentDiffReview", "contents": "Choose the left and right sides in Comparison, then compare their changes.\n[Select Comparison](command:agentDiffReview.compare)" },
