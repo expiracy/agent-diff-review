@@ -4,11 +4,15 @@ import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import type { Comparison } from '../../src/git.ts';
 import type { ReviewExtension } from '../../src/extension.ts';
 import type { Batch, Note } from '../../src/review.ts';
+import { GraphView, type GraphLocation } from '../../src/graph-view.ts';
+import type { ChangeGraph } from '../../src/change-graph.ts';
 
 export async function run(): Promise<void> {
+  console.log(`Integration runtime: VS Code ${vscode.version}, Node ${process.versions.node}, Electron ${process.versions.electron}, Chromium ${process.versions.chrome}`);
   const extension = vscode.extensions.getExtension('local-agent-tools.agent-diff-review');
   assert.ok(extension, 'Extension is registered');
   const api = await extension.activate() as ReviewExtension;
@@ -19,6 +23,10 @@ export async function run(): Promise<void> {
   });
   assert.ok(review?.files.length, 'A changed-file snapshot was created');
   assert.equal(api.comparison.state.selection?.base.value, review.sourceBase!.value, 'The comparison panel shows the selected branch ref');
+  await assert.rejects(api.startComparison({ base: { kind: 'ref', value: 'refs/heads/missing-review-test', label: 'Missing branch' }, target: review.sourceTarget!, mode: 'exact' }), /fatal:.*revision|unknown revision|ambiguous argument/);
+  assert.equal(api.currentReview!.id, review.id, 'A failed comparison preserves the shown snapshot');
+  assert.equal(api.store!.state.reviews.length, 1, 'A failed comparison does not create a partial review');
+  assert.equal(api.comparison.state.busy, false, 'A failed comparison releases the busy state');
   await api.handleComparisonAction({ action: 'swap' });
   assert.equal(api.comparison.state.selection?.base.kind, 'worktree');
   assert.equal(api.comparison.state.dirty, true);
@@ -41,7 +49,7 @@ export async function run(): Promise<void> {
   assert.equal((button.iconPath as vscode.ThemeIcon).id, vscode.ThemeIcon.File.id);
   assert.equal(button.command?.command, 'vscode.diff', 'File clicks use native diff editor behavior');
   assert.equal(api.tree.description, '3 files');
-  assert.match(api.tree.message!, /HEAD → Working tree/);
+  assert.equal(api.tree.message, undefined, 'Changed files do not repeat the comparison controls above the tree');
   assert.equal(api.provideFileDecoration(button.resourceUri!)?.badge, 'A');
   assert.equal(api.provideFileDecoration(children[1].resourceUri!)?.badge, 'D');
   assert.match(children[1].resourceUri!.path, /^\/before\//, 'Deleted files retain their original snapshot');
@@ -84,9 +92,13 @@ export async function run(): Promise<void> {
     return JSON.parse(result.stdout);
   };
   const connection = await runScript('connect', '--cwd', repository, '--label', 'Extension test session');
-  assert.match(api.tree.message!, /Agent: Extension test session/);
+  assert.equal(api.comparison.state.agent, 'Extension test session', 'The linked agent stays visible in Comparison');
+  await assert.rejects(api.send({ connectionId: 'missing-review-session', instruction: 'Attempt a send with an unavailable session.' }), /Connection not found or closed/);
+  assert.equal(api.store!.state.batches.length, 0, 'A failed send does not create a delivery batch');
+  assert.equal(api.store!.state.notes.filter(note => !note.batchId).length, 2, 'A failed send leaves both comments as drafts');
   const waiting = runScript('wait', '--connection', connection.connection, '--timeout', '10');
   const batch = await vscode.commands.executeCommand<Batch>('agentDiffReview.send', { connectionId: connection.id, instruction: 'Address these comments.' });
+  assert.ok(batch, 'A valid send can be retried after the earlier failure');
   const feedback = await waiting;
   assert.equal(feedback.batchId, batch!.id);
   assert.deepEqual(feedback.comments.map((comment: Note) => comment.side), ['before', 'after']);
@@ -141,6 +153,152 @@ export async function run(): Promise<void> {
   await api.store!.resolveNotes([followUpDraft.id], true);
   await writeFile(path.join(repository, 'example.ts'), example.after);
   await api.store!.selectReview(review.id);
+  const graphReview: Comparison = { ...review, id: randomUUID(), files: [{ ...example, path: 'graph.ts', before: 'class Counter {\n  value() { return 1; }\n  removed() { return 0; }\n}\nfunction helper() { return 2; }\n', after: 'class Counter {\n  value() { return helper(); }\n}\nfunction helper() { return 2; }\n' }] };
+  await api.store!.addReview(graphReview);
+  const graph = await vscode.commands.executeCommand<import('../../src/change-graph.ts').ChangeGraph>('agentDiffReview.openGraph');
+  assert.ok(graph?.symbols.some(symbol => symbol.name === 'Counter'), 'The editor graph analyses the captured comparison');
+  assert.ok(vscode.window.tabGroups.all.flatMap(group => group.tabs).some(tab => tab.input instanceof vscode.TabInputWebview && tab.label.startsWith('Change graph')), 'The graph opens as a dedicated editor page');
+  const removedSymbol = graph.symbols.find(symbol => symbol.name === 'removed')!;
+  await api.graph.openSymbol(graphReview.id, removedSymbol.id);
+  assert.equal(vscode.window.activeTextEditor?.document.uri.toString(), api.uri(graphReview.id, 'graph.ts', 'before').toString(), 'Removed graph members open the before snapshot');
+  assert.equal(vscode.window.activeTextEditor?.selection.start.line, 2, 'Graph navigation selects the exact member line');
+  const usage = graph.edges.find(edge => edge.kind === 'calls')!;
+  await api.store!.selectReview(review.id);
+  await api.graph.openUsage(graphReview.id, usage.id);
+  assert.equal(vscode.window.activeTextEditor?.document.uri.toString(), api.uri(graphReview.id, 'graph.ts', 'after').toString(), 'Graph usage links keep their saved snapshot even when another review is current');
+  assert.equal(vscode.window.activeTextEditor?.selection.start.line, 1, 'A usage opens the exact call site');
+  assert.equal(api.currentReview!.id, review.id, 'Graph navigation does not replace the active comparison');
+  await assert.rejects(api.graph.openSymbol(graphReview.id, 'unknown-symbol'), /unavailable/);
+  const restoredReview: Comparison = { ...graphReview, id: randomUUID() };
+  await api.store!.addReview(restoredReview);
+  await api.store!.selectReview(review.id);
+  const restoredPanel = vscode.window.createWebviewPanel('agentDiffReview.graph', 'Restoring graph', vscode.ViewColumn.Active, {});
+  try {
+    await api.restoreGraph(restoredPanel, { reviewId: restoredReview.id });
+    assert.match(restoredPanel.webview.html, /Change graph/, 'Restoration recreates the graph page in the supplied native panel');
+    assert.match(restoredPanel.webview.html, /graph-layout\.js/, 'Native graph pages include the shared axes bundle');
+    assert.ok(restoredPanel.webview.html.indexOf('graph-layout.js') < restoredPanel.webview.html.indexOf('graph.js'), 'Axes load before the graph renderer');
+    assert.ok(restoredPanel.webview.options.localResourceRoots?.some(uri => uri.fsPath === vscode.Uri.joinPath(extension.extensionUri, 'out').fsPath), 'The native webview permits its packaged layout bundle');
+    await api.graph.openSymbol(restoredReview.id, removedSymbol.id);
+    assert.equal(vscode.window.activeTextEditor?.document.uri.toString(), api.uri(restoredReview.id, 'graph.ts', 'before').toString(), 'A restored graph navigates to its original saved review');
+    assert.equal(api.currentReview!.id, review.id, 'Restoring an older graph leaves the active comparison unchanged');
+  } finally { restoredPanel.dispose(); }
+  const unavailablePanel = vscode.window.createWebviewPanel('agentDiffReview.graph', 'Unavailable graph', vscode.ViewColumn.Active, {});
+  let unavailableDisposed = false;
+  const unavailableSubscription = unavailablePanel.onDidDispose(() => { unavailableDisposed = true; });
+  try {
+    await assert.doesNotReject(api.restoreGraph(unavailablePanel, { reviewId: 'missing-review-snapshot' }), 'An unavailable saved graph closes gracefully');
+    assert.equal(unavailableDisposed, true, 'An unavailable graph does not leave an empty editor tab');
+    assert.equal(api.currentReview!.id, review.id, 'An unavailable graph does not replace the current comparison');
+  } finally { unavailableSubscription.dispose(); unavailablePanel.dispose(); }
+  const analysisFailureReview: Comparison = { ...graphReview, id: randomUUID(), files: [{ ...graphReview.files[0], after: 42 as unknown as string }] };
+  await api.store!.addReview(analysisFailureReview);
+  await api.store!.selectReview(review.id);
+  const analysisFailurePanel = vscode.window.createWebviewPanel('agentDiffReview.graph', 'Analysis failure', vscode.ViewColumn.Active, {});
+  let analysisFailureDisposed = false;
+  const analysisFailureSubscription = analysisFailurePanel.onDidDispose(() => { analysisFailureDisposed = true; });
+  try {
+    await api.restoreGraph(analysisFailurePanel, { reviewId: analysisFailureReview.id });
+    assert.equal(analysisFailureDisposed, false, 'A restored graph with an analysis error stays open for Retry');
+    assert.equal(api.currentReview!.id, review.id, 'Analysis failure does not replace the current comparison');
+  } finally { analysisFailureSubscription.dispose(); analysisFailurePanel.dispose(); }
+  let attempts = 0;
+  let finishRetry!: (graph: ChangeGraph) => void;
+  const retryLocations: GraphLocation[] = [];
+  const retryView = new GraphView(extension.extensionUri, async location => { retryLocations.push(location); }, {
+    build: async snapshot => {
+      assert.equal(snapshot.id, graphReview.id, 'Retry uses the original captured review');
+      assert.deepEqual(snapshot.files, graphReview.files);
+      if (++attempts === 1) throw new Error('Temporary analysis failure');
+      return new Promise<ChangeGraph>(resolve => { finishRetry = resolve; });
+    },
+    dispose() {}
+  });
+  const retryPanel = vscode.window.createWebviewPanel('agentDiffReview.graph', 'Retry test', vscode.ViewColumn.Active, {});
+  try {
+    await assert.rejects(retryView.show(graphReview, retryPanel), /Temporary analysis failure/);
+    const graphTabCount = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputWebview).length;
+    const retried = retryView.retry(graphReview.id);
+    const duplicate = retryView.retry(graphReview.id);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(attempts, 2, 'Concurrent retry requests start just one additional analysis');
+    finishRetry(graph);
+    assert.equal(await retried, graph);
+    assert.equal(await duplicate, graph);
+    assert.equal(vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputWebview).length, graphTabCount, 'Retry keeps the existing editor panel');
+    await retryView.openSymbol(graphReview.id, removedSymbol.id);
+    assert.equal(retryLocations[0]?.reviewId, graphReview.id, 'The recovered graph still navigates within its saved review');
+    assert.equal(retryLocations[0]?.side, 'before');
+  } finally { retryPanel.dispose(); retryView.dispose(); }
+  const pendingGraphs: Array<(result: ChangeGraph) => void> = [];
+  const lifecycleLocations: GraphLocation[] = [];
+  const lifecycleView = new GraphView(extension.extensionUri, async location => { lifecycleLocations.push(location); }, {
+    build: snapshot => {
+      assert.equal(snapshot.id, graphReview.id);
+      return new Promise<ChangeGraph>(resolve => { pendingGraphs.push(resolve); });
+    },
+    dispose() {}
+  });
+  const closingPanel = vscode.window.createWebviewPanel('agentDiffReview.graph', 'Closing analysis', vscode.ViewColumn.Active, {});
+  const closingAnalysis = lifecycleView.show(graphReview, closingPanel);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(pendingGraphs.length, 1, 'Analysis is pending before the graph is closed');
+  closingPanel.dispose();
+  const replacementPanel = vscode.window.createWebviewPanel('agentDiffReview.graph', 'Replacement analysis', vscode.ViewColumn.Active, {});
+  let replacementDisposed = false;
+  const replacementSubscription = replacementPanel.onDidDispose(() => { replacementDisposed = true; });
+  try {
+    const replacementAnalysis = lifecycleView.show(graphReview, replacementPanel);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(pendingGraphs.length, 2, 'Reopening a closed pending graph creates a usable replacement page');
+    pendingGraphs[1](graph);
+    assert.equal(await replacementAnalysis, graph);
+    pendingGraphs[0](graph);
+    assert.equal(await closingAnalysis, graph, 'Late analysis of a closed panel settles without affecting its replacement');
+    assert.equal(replacementDisposed, false);
+    await lifecycleView.openSymbol(graphReview.id, removedSymbol.id);
+    assert.equal(lifecycleLocations[0]?.reviewId, graphReview.id);
+    assert.equal(lifecycleLocations[0]?.side, 'before', 'The replacement still opens the captured original-side symbol');
+  } finally {
+    pendingGraphs.forEach(finish => finish(graph));
+    replacementSubscription.dispose(); closingPanel.dispose(); replacementPanel.dispose(); lifecycleView.dispose();
+  }
+  let reopenAttempts = 0;
+  let finishReopen: ((result: ChangeGraph) => void) | undefined;
+  let reopening: Promise<ChangeGraph> | undefined;
+  const reopenLocations: GraphLocation[] = [];
+  const reopenView = new GraphView(extension.extensionUri, async location => { reopenLocations.push(location); }, {
+    build: async snapshot => {
+      assert.equal(snapshot.id, graphReview.id);
+      assert.deepEqual(snapshot.files, graphReview.files, 'Reopening retries the original captured review');
+      if (++reopenAttempts === 1) throw new Error('Reopen analysis failure');
+      return new Promise<ChangeGraph>(resolve => { finishReopen = resolve; });
+    },
+    dispose() {}
+  });
+  const failedPanel = vscode.window.createWebviewPanel('agentDiffReview.graph', 'Reopen failed graph', vscode.ViewColumn.Active, {});
+  let failedPanelDisposed = false;
+  const failedPanelSubscription = failedPanel.onDidDispose(() => { failedPanelDisposed = true; });
+  try {
+    await assert.rejects(reopenView.show(graphReview, failedPanel), /Reopen analysis failure/);
+    reopening = reopenView.show(graphReview);
+    const duplicateReopen = reopenView.show(graphReview);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(reopenAttempts, 2, 'Repeated Open Graph requests share one retry');
+    assert.equal(reopening, duplicateReopen);
+    assert.equal(failedPanelDisposed, false, 'Open Graph retries a failed review in its existing panel to retain view state');
+    assert.ok(finishReopen);
+    finishReopen(graph);
+    assert.equal(await reopening, graph);
+    assert.equal(await duplicateReopen, graph);
+    await reopenView.openSymbol(graphReview.id, removedSymbol.id);
+    assert.equal(reopenLocations[0]?.reviewId, graphReview.id);
+    assert.equal(reopenLocations[0]?.side, 'before');
+  } finally {
+    finishReopen?.(graph);
+    await reopening?.catch(() => undefined);
+    failedPanelSubscription.dispose(); failedPanel.dispose(); reopenView.dispose();
+  }
   await vscode.commands.executeCommand('agentDiffReview.comparison.focus');
   console.log('VS Code integration assertions passed.');
   const pause = Number(process.env.AGENT_DIFF_REVIEW_TEST_PAUSE ?? 0);

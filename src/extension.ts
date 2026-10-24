@@ -7,6 +7,7 @@ import { comparisonOptions, sendOptions, type CompareOptions } from './command-o
 import { buildFileTree, type FileTreeNode } from './file-tree.ts';
 import { CommentsView } from './comments-view.ts';
 import { ComparisonView } from './comparison-view.ts';
+import { GraphView, type GraphLocation } from './graph-view.ts';
 import { comparisonSources, endpointLabel, matchesComparison, swapComparison } from './comparison-selection.ts';
 import { COMMENT_STATES, commentStatus } from './comment-workflow.ts';
 
@@ -32,6 +33,7 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
   readonly tree: vscode.TreeView<TreeEntry>;
   readonly comments = new CommentsView();
   readonly comparison: ComparisonView;
+  readonly graph: GraphView;
   store?: ReviewStore;
   bridge?: Bridge;
   repository?: { root: string; commonDir: string };
@@ -55,8 +57,10 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     this.status.name = 'Agent Diff Review';
     this.tree = vscode.window.createTreeView('agentDiffReview', { treeDataProvider: this, showCollapseAll: true });
     this.comparison = new ComparisonView(context.extensionUri, message => this.handleComparisonAction(message));
-    context.subscriptions.push(this.changed, this.decorationsChanged, this.controller, this.output, this.status, this.tree, this.comments, this.comparison,
+    this.graph = new GraphView(context.extensionUri, location => this.openSnapshotLocation(location));
+    context.subscriptions.push(this.changed, this.decorationsChanged, this.controller, this.output, this.status, this.tree, this.comments, this.comparison, this.graph,
       vscode.window.registerWebviewViewProvider('agentDiffReview.comparison', this.comparison),
+      vscode.window.registerWebviewPanelSerializer('agentDiffReview.graph', { deserializeWebviewPanel: (panel, state) => this.restoreGraph(panel, state) }),
       vscode.window.registerFileDecorationProvider(this),
       vscode.workspace.registerTextDocumentContentProvider(SCHEME, this));
     const register = (id: string, callback: (...args: any[]) => unknown) => context.subscriptions.push(vscode.commands.registerCommand(`agentDiffReview.${id}`, async (...args) => {
@@ -78,6 +82,12 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     register('selectAgent', () => this.selectAgent());
     register('send', (argument: unknown) => this.send(sendOptions(argument)));
     register('openDiff', (entry: TreeEntry) => this.openDiff(entry.reviewId!, entry.filePath!));
+    register('openGraph', async (entry?: TreeEntry) => {
+      await this.ensureRepository();
+      const review = entry?.reviewId ? this.store!.review(entry.reviewId) : this.currentReview;
+      if (!review) throw new Error('Select a comparison before opening its graph.');
+      return this.graph.show(review);
+    });
     register('showReview', async (entry: TreeEntry) => {
       await this.store!.selectReview(entry.reviewId!);
     });
@@ -139,6 +149,21 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
 
   get currentReview(): Comparison | undefined {
     return this.store?.state.reviews.find(review => review.id === this.store!.state.currentReviewId);
+  }
+
+  async restoreGraph(panel: vscode.WebviewPanel, state: unknown): Promise<void> {
+    try {
+      const reviewId = state && typeof state === 'object' && 'reviewId' in state && typeof state.reviewId === 'string' ? state.reviewId : undefined;
+      if (!reviewId) throw new Error('The saved graph has no review snapshot.');
+      await this.ensureRepository();
+      await this.graph.show(this.store!.review(reviewId), panel).catch(error => {
+        this.output.appendLine(`Restored graph analysis failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    } catch (error) {
+      panel.dispose();
+      this.output.appendLine(`Graph restoration failed: ${error instanceof Error ? error.message : String(error)}`);
+      void vscode.window.showErrorMessage('Agent Diff Review: Unable to restore the saved graph. Open Change Graph from Changes to try again.');
+    }
   }
 
   uri(reviewId: string, filePath: string, side: Note['side']): vscode.Uri {
@@ -245,12 +270,20 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
 
   async openComment(noteId: string): Promise<void> {
     const note = this.noteFromArgument(noteId);
-    const uri = this.uri(note.reviewId, note.filePath, note.side);
-    const document = await vscode.workspace.openTextDocument(uri);
-    const range = new vscode.Range(note.startLine - 1, 0, note.endLine - 1, document.lineAt(note.endLine - 1).text.length);
     const thread = this.threads.get(this.threadKey(note));
     if (thread) thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
-    await this.openDiff(note.reviewId, note.filePath);
+    await this.openSnapshotLocation(note);
+  }
+
+  private async openSnapshotLocation(location: GraphLocation): Promise<void> {
+    const { reviewId, filePath, side, startLine, endLine } = location;
+    const review = this.store!.review(reviewId);
+    if (!review.files.some(file => file.path === filePath)) throw new Error('This file is not in the review snapshot.');
+    const uri = this.uri(reviewId, filePath, side);
+    const document = await vscode.workspace.openTextDocument(uri);
+    if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine || endLine > document.lineCount) throw new Error('This location is outside the captured file.');
+    const range = new vscode.Range(startLine - 1, 0, endLine - 1, document.lineAt(endLine - 1).text.length);
+    await this.openDiff(reviewId, filePath);
     let finishFocus!: () => void;
     const focused = new Promise<void>(resolve => {
       const listener = vscode.window.onDidChangeActiveTextEditor(editor => {
@@ -260,7 +293,7 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
       finishFocus = () => { listener.dispose(); clearTimeout(timeout); resolve(); };
     });
     try {
-      await vscode.commands.executeCommand(note.side === 'before' ? 'workbench.action.compareEditor.focusSecondarySide' : 'workbench.action.compareEditor.focusPrimarySide', this.uri(note.reviewId, note.filePath, 'after'));
+      await vscode.commands.executeCommand(side === 'before' ? 'workbench.action.compareEditor.focusSecondarySide' : 'workbench.action.compareEditor.focusPrimarySide', this.uri(reviewId, filePath, 'after'));
       if (vscode.window.activeTextEditor?.document.uri.toString() !== uri.toString()) await focused;
     } finally { finishFocus(); }
     const editor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
@@ -478,7 +511,7 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     void vscode.commands.executeCommand('setContext', 'agentDiffReview.hasReview', !!review);
     void vscode.commands.executeCommand('setContext', 'agentDiffReview.hasDrafts', drafts > 0);
     this.tree.description = review ? `${review.files.length} file${review.files.length === 1 ? '' : 's'}` : undefined;
-    this.tree.message = review ? `${review.files.length ? '' : 'No changed files.\n'}${endpointLabel(review.base)} → ${endpointLabel(review.target)}\n${review.mode === 'exact' ? 'Exact comparison' : 'Branch changes'} · ${connection ? `Agent: ${connection.label}` : 'No agent selected'}` : undefined;
+    this.tree.message = review && !review.files.length ? `No changed files.\n${endpointLabel(review.base)} → ${endpointLabel(review.target)}` : undefined;
     if (!review) { this.status.hide(); return; }
     this.status.text = `$(comment-discussion) Review${drafts ? `: ${drafts} draft${drafts === 1 ? '' : 's'}` : open ? `: ${open} open` : ''}`;
     this.status.tooltip = `${review.base.label} → ${review.target.label}\n${connection ? `Agent: ${connection.label}` : 'No agent selected'}`;

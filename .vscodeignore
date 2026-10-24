@@ -8,5 +8,6 @@ scripts/**
 node_modules/**
 tsconfig.json
 TEST-SCENARIOS.md
+OVERNIGHT-PROGRESS.md
 package-lock.json
 *.vsix

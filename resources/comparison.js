@@ -1,11 +1,13 @@
 const vscode = acquireVsCodeApi();
 const elements = Object.fromEntries(['base', 'target', 'mode', 'swap', 'compare', 'agent', 'status', 'showing', 'mode-help'].map(id => [id, document.getElementById(id)]));
+let restoreCompareFocus = false;
 
 for (const side of ['base', 'target']) elements[side].addEventListener('click', () => vscode.postMessage({ action: 'pick', side }));
 elements.mode.addEventListener('change', () => vscode.postMessage({ action: 'mode', mode: elements.mode.value }));
 elements.swap.addEventListener('click', () => vscode.postMessage({ action: 'swap' }));
 elements.agent.addEventListener('click', () => vscode.postMessage({ action: 'agent' }));
 elements.compare.addEventListener('click', () => {
+  restoreCompareFocus = document.activeElement === elements.compare;
   elements.compare.disabled = true;
   vscode.postMessage({ action: 'compare' });
 });
@@ -19,17 +21,22 @@ window.addEventListener('message', event => {
   for (const side of ['base', 'target']) {
     const endpoint = state.selection?.[side];
     document.getElementById(`${side}-value`).textContent = endpoint?.label.split(' · ')[0] ?? 'Choose a branch…';
-    document.getElementById(`${side}-detail`).textContent = endpoint ? (endpoint.kind === 'worktree' ? 'Working tree' : endpoint.value.startsWith('refs/remotes/') ? 'Remote branch' : 'Branch / revision') : '';
+    document.getElementById(`${side}-detail`).textContent = endpoint ? (endpoint.kind === 'worktree' ? endpoint.value.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || endpoint.value : endpoint.value.startsWith('refs/remotes/') ? 'Remote branch' : endpoint.value.startsWith('refs/heads/') ? 'Local branch' : 'Revision') : '';
     elements[side].title = endpoint?.value ?? '';
   }
   elements.mode.value = state.selection?.mode ?? 'exact';
   elements.mode.querySelector('[value="merge-base"]').disabled = state.selection?.base.kind !== 'ref';
   elements['mode-help'].textContent = elements.mode.value === 'merge-base' ? 'Changes introduced on the right since the common ancestor.' : 'Compare the two selected states directly.';
+  elements.compare.classList.toggle('secondary', !!state.showing && !state.dirty);
   elements.compare.textContent = state.busy ? 'Comparing…' : !state.showing ? 'Compare' : state.dirty ? 'Apply Comparison' : 'Refresh Changes';
   elements.status.textContent = !state.selection ? 'Open a Git repository to compare changes.' : state.busy ? 'Preparing the diff…' : state.dirty && state.showing ? 'Selection changed. Apply it to update the diff.' : state.showing ? `${state.showing.files} changed file${state.showing.files === 1 ? '' : 's'} · snapshot ${new Date(state.showing.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Choose the left and right sides, then compare.';
   elements.showing.textContent = state.showing && state.dirty ? `Showing: ${state.showing.base} → ${state.showing.target}` : '';
   elements.agent.disabled = !state.repository || state.busy;
   elements.agent.textContent = state.agent ? `Agent: ${state.agent}` : 'Connect an agent…';
+  if (!state.busy && restoreCompareFocus) {
+    if (!disabled && document.hasFocus() && document.activeElement === document.body) elements.compare.focus({ preventScroll: true });
+    restoreCompareFocus = false;
+  }
 });
 
 vscode.postMessage({ action: 'ready' });

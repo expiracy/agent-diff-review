@@ -15,7 +15,6 @@ export class CommentsView implements vscode.TreeDataProvider<CommentEntry>, vsco
     const open = state.notes.filter(note => !note.resolved).length;
     this.tree.description = state.notes.length ? `${open} open` : undefined;
     this.tree.badge = open ? { value: open, tooltip: `${open} open review comments` } : undefined;
-    this.tree.message = state.notes.length ? 'Comments from all review snapshots. Select one to jump to its lines.' : undefined;
     this.changed.fire(undefined);
   }
 

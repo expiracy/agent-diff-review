@@ -2,7 +2,7 @@
   "name": "agent-diff-review",
   "displayName": "Agent Diff Review",
   "description": "Review branch and worktree diffs, leave line comments, and send feedback to your existing coding agent session.",
-  "version": "0.2.1",
+  "version": "0.4.1",
   "publisher": "local-agent-tools",
   "license": "MIT",
   "private": true,
@@ -19,7 +19,8 @@
     "workspace"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onWebviewPanel:agentDiffReview.graph"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -35,11 +36,12 @@
     ] },
     "viewsWelcome": [
       { "view": "agentDiffReview", "contents": "Choose the left and right sides in Comparison, then compare their changes.\n[Select Comparison](command:agentDiffReview.compare)" },
-      { "view": "agentDiffReview.comments", "contents": "Add comments to lines in a diff. All comments and agent replies stay here across comparison refreshes.\n[Select Comparison](command:agentDiffReview.compare)" }
+      { "view": "agentDiffReview.comments", "contents": "Open a changed file in Changes, then use the comment gutter to leave feedback. Drafts and agent replies stay here across snapshots." }
     ],
     "commands": [
       { "command": "agentDiffReview.compare", "title": "Select Comparison", "category": "Agent Diff Review", "icon": "$(git-compare)" },
       { "command": "agentDiffReview.refresh", "title": "Refresh Comparison", "category": "Agent Diff Review", "icon": "$(refresh)" },
+      { "command": "agentDiffReview.openGraph", "title": "Open Change Graph", "category": "Agent Diff Review", "icon": "$(type-hierarchy)", "enablement": "agentDiffReview.hasReview" },
       { "command": "agentDiffReview.fetch", "title": "Fetch Remote Branches", "category": "Agent Diff Review", "icon": "$(cloud-download)" },
       { "command": "agentDiffReview.connect", "title": "Connect Agent", "category": "Agent Diff Review", "icon": "$(plug)" },
       { "command": "agentDiffReview.selectAgent", "title": "Select Agent Session", "category": "Agent Diff Review", "icon": "$(plug)" },
@@ -62,11 +64,11 @@
     ],
     "menus": {
       "view/title": [
+        { "command": "agentDiffReview.openGraph", "when": "view == agentDiffReview && agentDiffReview.hasReview", "group": "navigation@1" },
         { "command": "agentDiffReview.compare", "when": "view == agentDiffReview && !agentDiffReview.hasReview", "group": "navigation@1" },
         { "command": "agentDiffReview.refresh", "when": "view == agentDiffReview && agentDiffReview.hasReview", "group": "navigation@2" },
-        { "command": "agentDiffReview.showComments", "when": "view == agentDiffReview", "group": "navigation@3" },
         { "command": "agentDiffReview.findComment", "when": "view == agentDiffReview.comments", "group": "navigation@1" },
-        { "command": "agentDiffReview.send", "when": "view == agentDiffReview.comments", "group": "navigation@2" },
+        { "command": "agentDiffReview.send", "when": "view == agentDiffReview.comments && agentDiffReview.hasDrafts", "group": "navigation@2" },
         { "command": "agentDiffReview.selectAgent", "when": "view == agentDiffReview || view == agentDiffReview.comparison || view == agentDiffReview.comments", "group": "1_session@1" },
         { "command": "agentDiffReview.fetch", "when": "view == agentDiffReview || view == agentDiffReview.comparison", "group": "2_git" },
         { "command": "agentDiffReview.connect", "when": "view == agentDiffReview || view == agentDiffReview.comparison || view == agentDiffReview.comments", "group": "1_session@2" }
@@ -100,18 +102,25 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p .",
+    "compile": "tsc -p . && node scripts/build-graph.cjs",
     "watch": "tsc -p . --watch",
     "test": "npm run compile && node --test out/test/*.test.js",
     "test:extension": "npm run compile && node scripts/test-extension.cjs",
+    "test:webviews": "npm run compile && node scripts/test-webviews.cjs && node scripts/test-graph-axes.cjs",
     "package": "vsce package --allow-missing-repository",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
+    "@repomix/tree-sitter-wasms": "0.1.17",
     "@types/node": "^22.20.5",
     "@types/vscode": "^1.94.0",
+    "@vscode/codicons": "0.0.46-24",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^4.0.0",
-    "typescript": "^5.9.3"
+    "diff": "9.0.0",
+    "esbuild": "0.28.2",
+    "playwright": "1.62.1",
+    "typescript": "^5.9.3",
+    "web-tree-sitter": "0.27.1"
   }
 }

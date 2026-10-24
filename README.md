@@ -6,14 +6,38 @@ The first version uses a local bridge and a dependency-free Node.js script. The 
 
 **Try it**
 
-1. In VS Code, run **Extensions: Install from VSIX…** and select `agent-diff-review-0.2.1.vsix` from this project.
+1. In VS Code, run **Extensions: Install from VSIX…** and select `agent-diff-review-0.4.1.vsix` from this project.
 2. Open a trusted Git repository and click the **Agent Diff Review** activity-bar icon. The **Comparison** panel keeps the left and right sources visible above the changed files.
-3. Click **Base · left side** or **Compare · right side** to choose a branch, worktree, or revision. Choose **Exact differences** to compare the selected states directly, or **Branch changes** to see changes introduced on the right since the common ancestor. Use **⇄** to swap sides, then **Compare** or **Apply Comparison** to update the diff. An unapplied selection leaves the shown comparison clearly labelled. Remote branches reflect the last fetch; **Fetch Remote Branches** updates them explicitly.
+3. Click **Base · left side** or **Compare · right side** to choose a branch, worktree, or revision. Choose **Exact differences** to compare the selected states directly, or **Branch changes** to see changes introduced on the right since the common ancestor. Use **Swap left and right** beside the source controls, then **Compare** or **Apply Comparison** to update the diff. An unapplied selection leaves the shown comparison clearly labelled. Remote branches reflect the last fetch; **Fetch Remote Branches** updates them explicitly.
 4. Expand folders in **Changes** and open a changed file. The tree uses your VS Code file icon theme, with A/M/D badges for added, modified, and deleted files. Hover in the comment gutter or select lines and use **Agent Diff Review: Comment on Selected Lines** from the editor context menu. **Add Comment** saves a draft. Removed lines can be commented on in the left pane.
 5. Click **Connect an agent…** in Comparison, or run **Agent Diff Review: Connect Agent**. It opens the bundled skill and copies a message to paste into your existing agent session. Ask that agent to follow the skill. Use **… → Select Agent Session** to choose among connected sessions. The selected session appears in Comparison.
 6. Use **Send Review** in **Comments** and optionally add an overall instruction. The agent's waiting command receives the comments and captured code. Comments from older snapshots can be sent from their context menu; when several snapshots have drafts, Send Review lets you choose which one to send.
 
 New workspace layouts give Comparison room for its controls. VS Code keeps panel sizes you have already saved; drag the divider below Comparison to resize an existing layout. The activity-bar badge counts open comments, while the Changes heading shows the file count.
+
+**Change graph**
+
+After applying a comparison, click **Open Change Graph** in the Changes title bar, or run **Agent Diff Review: Open Change Graph**. The graph opens in its own editor tab. Cards show classes, interfaces, functions, methods and fields from TypeScript/JavaScript, Python, C++, Java and C# snapshots. Every card puts the entity name above its repository-relative file path. Added, modified and removed members carry A/M/D badges and `+added −removed` line counts. Class totals count each changed line once, including captured C++ member definitions in other files.
+
+The view follows your VS Code theme, uses native symbol icons and your configured editor font for signatures, and keeps file paths and line counts in consistent positions. Controls share VS Code corner sizes, hover/focus styling and button roles; routine refresh and diff navigation use secondary buttons. Graph cards stay flat, while popovers use the host widget styling. Dense graphs reveal relationship labels on selection, hover or keyboard focus. The Details sidebar groups relationships into collapsible Uses and Used by sections.
+
+Use **Layout → Axes** to group full cards into labelled bands. Each axis can show **Folder**, **File**, **Changed lines**, or **Change type**; **Swap axes** exchanges the dimensions. Changed lines means additions plus removals, with bands for 0, 1–10, 11–50, 51–200, 201+ and unavailable counts. Class totals stay the same when members are expanded or filtered. **Relationships** keeps the original dependency layout. The selected layout and axes are saved with the graph.
+
+In Layout, set **Connections** to **All** or **Selected card**. Selecting a class includes its members’ incoming and outgoing links. Axes route directed links through gaps between cards, with arrowheads at their targets. The footer reports connection groups in view; the Details lists retain the underlying usages, including off-screen connections. **Escape** closes Layout and returns focus to its button.
+
+Select a card or member to see its full signature, owner, exact location, line counts, **Uses**, and **Used by** in the right sidebar. Follow a related symbol to select it in the graph, or select a relationship to inspect its source, target and call/type-reference location. **Open diff** and **Open usage in diff** open the native diff at the captured lines; removed symbols and usages open the original side. Earlier graph tabs stay pinned to their saved review when another comparison becomes current.
+
+Double-click a graph card heading or member, or focus it and press **Enter**, to open its diff directly. A single click shows Details; **Space** also selects a focused item. **Escape** dismisses Other changes and returns focus to its button. Opening Other changes focuses its file list. Choosing a file shows Details and focuses **Open file diff**, ready for **Enter**. Expanding a card focuses its first newly revealed member; paging focuses the first member on the next page, and collapsing returns focus to the card heading.
+
+Following a related symbol brings its selected member into view and moves keyboard focus to it. Exploring a file from the overview focuses its first symbol. **All files** returns focus to that file or a matching component; with no results, it focuses search. If analysis fails, **Retry analysis** rebuilds the same saved graph in its existing tab while keeping the view settings. **Open Change Graph** also retries an already-open failed comparison in that tab.
+
+In long lists, **Show more** moves focus to the first new file, related symbol or usage action.
+
+Reloading VS Code restores graph tabs with their original saved snapshot, selection, filters and camera position. If the saved review is unavailable, the unusable tab closes with a message explaining how to reopen the graph.
+
+Drag the background or scroll to pan. Hold **Shift** while scrolling to pan sideways. Ctrl/⌘ + scroll and the zoom buttons change scale. **Fit** frames the visible graph. Search finds symbols and paths, filters select change kinds, and **Context** includes directly connected context from the captured files. Expanded members follow the change filters; narrowing filters keeps the remaining members visible. Large comparisons start with a file overview; expand a file to inspect its entities. Cards outside the viewport are not rendered, and large member/relationship lists load in batches. **Other changes** keeps imports, configuration, unsupported languages, parse notices and omitted files accessible through their file diffs.
+
+Parsing runs in a worker with bounded content and review caches. Parser binaries ship in the extension and require no runtime download. Links reflect syntax that can be resolved within the captured files; the graph does not index unchanged files outside the review, infer runtime dispatch, or guess ambiguous call targets. Line counts measure textual additions and removals, so replacing one line counts once on each side. Analysis is limited to 20,000 symbols per file and 50,000 per comparison; any remaining files/lines stay available in Other changes.
 
 **Reviewing fixes and following up**
 
@@ -60,9 +84,13 @@ The bridge listens only on `127.0.0.1` and requires a token from a private regis
 npm ci
 npm test
 npm run test:extension
+npx playwright install chromium
+npm run test:webviews
 npm run package
 ```
 
 `npm test` compiles TypeScript and exercises real temporary Git repositories, persisted reviews, local HTTP authentication, worktree/session isolation, and a separate CLI process. `npm run test:extension` opens an isolated VS Code profile and exercises native diffs, original/modified-side comments, script delivery, agent replies, and thread resolution. It uses the installed macOS VS Code when available; set `VSCODE_EXECUTABLE` to another installation, or let the test runner download VS Code. Tests do not install into your normal VS Code profile.
+
+`npm run test:webviews` runs the actual graph and Comparison HTML, styles and scripts in headless Chromium, with the VS Code messaging API replaced by a test adapter. It covers selection, double-click and keyboard diff requests, popup dismissal, search, snapshot restoration, 10,000-symbol rendering, theme typography, and narrow sidebar layouts. Native integration tests verify the extension side of those diff requests. Set `WEBVIEW_TEST_ARTIFACTS` to an absolute directory to retain screenshots, or `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use a specific Chromium installation. Both runners print their actual runtime versions; browser tests fix the display scale so wheel distances remain consistent on Retina displays.
 
 To develop interactively, run **Run Agent Diff Review** with F5, then open a Git repository in the Extension Development Host. Native editor integration follows Microsoft's [diff command](https://code.visualstudio.com/api/references/commands), [virtual document API](https://code.visualstudio.com/api/extension-guides/virtual-documents), and [comment sample](https://github.com/microsoft/vscode-extension-samples/tree/main/comment-sample).
