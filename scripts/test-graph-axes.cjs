@@ -163,6 +163,45 @@ const settle = page => page.evaluate(() => new Promise(resolve => requestAnimati
     await page.getByRole('button', { name: 'Fit graph', exact: true }).click();
     await settle(page);
     console.log('PASS off-screen connection counts track the visible canvas while panning');
+    const recoveryView = await page.locator('#viewport').boundingBox();
+    const recoveryBefore = await page.evaluate(() => window.__state);
+    await page.mouse.move(recoveryView.x + recoveryView.width - 50, recoveryView.y + recoveryView.height - 80);
+    await page.mouse.wheel(30000, 30000);
+    await page.waitForFunction(y => window.__state.camera.y !== y, recoveryBefore.camera.y);
+    await settle(page);
+    assert.equal(await page.getByRole('button', { name: 'Show selection', exact: true }).count(), 1, 'A panned-away graph offers an explicit way back to the selection');
+    assert.equal(await page.getByRole('button', { name: 'Show selection', exact: true }).isVisible(), true);
+    const pannedCamera = await page.evaluate(() => window.__state.camera);
+    await page.reload();
+    await page.waitForFunction(() => document.body.getAttribute('aria-busy') === 'false');
+    await settle(page);
+    assert.deepEqual(await page.evaluate(() => window.__state.camera), pannedCamera, 'Recovery does not silently replace a saved camera on reload');
+    await page.getByRole('button', { name: 'Show selection', exact: true }).click();
+    await settle(page);
+    const recovered = await page.locator(`.node-head[data-symbol="${targetId}"]`).boundingBox();
+    const recoveredView = await page.locator('#viewport').boundingBox();
+    assert.ok(recovered.x >= recoveredView.x + 112 && recovered.y >= recoveredView.y + 52 && recovered.x + recovered.width <= recoveredView.x + recoveredView.width, 'The selected card is visible clear of the axis guides');
+    assert.equal(await page.evaluate(() => window.__state.camera.zoom), recoveryBefore.camera.zoom);
+    assert.deepEqual(await page.evaluate(() => window.__state.selected), recoveryBefore.selected);
+    assert.equal(await page.locator('#recover-view').isVisible(), false, 'The recovery action leaves once the graph is back in view');
+    console.log('PASS explicit graph recovery preserves selection and zoom across a panned-away reload');
+    await page.getByRole('button', { name: 'Review overview', exact: true }).click();
+    await page.mouse.move(recoveryView.x + recoveryView.width - 50, recoveryView.y + recoveryView.height - 80);
+    await page.mouse.wheel(30000, 30000);
+    await page.waitForFunction(() => !document.getElementById('recover-view').hidden);
+    await page.setViewportSize({ width: 220, height: 480 });
+    await settle(page);
+    assert.equal(await page.locator('#recover-view').innerText(), 'Fit graph');
+    const recoverHit = await page.locator('#recover-view').evaluate(node => { const rect = node.getBoundingClientRect(), target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2); return target === node || node.contains(target); });
+    assert.equal(recoverHit, true, 'Recovery remains reachable in a narrow editor');
+    await page.locator('#recover-view').click();
+    await settle(page);
+    assert.equal(await page.locator('#recover-view').isVisible(), false);
+    assert.ok(await page.locator('.node').count() > 0);
+    await page.setViewportSize({ width: 1500, height: 1000 });
+    console.log('PASS fit recovery without a selection remains reachable at 220px');
+
+
 
     const beforeMembers = Array.from({ length: 65 }, (_, i) => `  method${i}() { return target() + ${i}; }`).join('\n');
     const afterMembers = beforeMembers.replaceAll('target() +', 'target() -');

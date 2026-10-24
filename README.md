@@ -6,7 +6,7 @@ The first version uses a local bridge and a dependency-free Node.js script. The 
 
 **Try it**
 
-1. In VS Code, run **Extensions: Install from VSIX…** and select `agent-diff-review-0.4.1.vsix` from this project.
+1. In VS Code, run **Extensions: Install from VSIX…** and select `agent-diff-review-0.5.0.vsix` from this project.
 2. Open a trusted Git repository and click the **Agent Diff Review** activity-bar icon. The **Comparison** panel keeps the left and right sources visible above the changed files.
 3. Click **Base · left side** or **Compare · right side** to choose a branch, worktree, or revision. Choose **Exact differences** to compare the selected states directly, or **Branch changes** to see changes introduced on the right since the common ancestor. Use **Swap left and right** beside the source controls, then **Compare** or **Apply Comparison** to update the diff. An unapplied selection leaves the shown comparison clearly labelled. Remote branches reflect the last fetch; **Fetch Remote Branches** updates them explicitly.
 4. Expand folders in **Changes** and open a changed file. The tree uses your VS Code file icon theme, with A/M/D badges for added, modified, and deleted files. Hover in the comment gutter or select lines and use **Agent Diff Review: Comment on Selected Lines** from the editor context menu. **Add Comment** saves a draft. Removed lines can be commented on in the left pane.
@@ -16,6 +16,8 @@ The first version uses a local bridge and a dependency-free Node.js script. The 
 New workspace layouts give Comparison room for its controls. VS Code keeps panel sizes you have already saved; drag the divider below Comparison to resize an existing layout. The activity-bar badge counts open comments, while the Changes heading shows the file count.
 
 **Change graph**
+
+The **Review overview** in Details shows the whole saved comparison: file status totals, exact text-line counts, captured revisions or working-tree folders, comparison mode and capture time. Counts come from files, so class and member changes are counted once. Unavailable counts are identified separately. **Largest text changes** lists up to five files to start with; select a path to inspect its details or use the adjacent diff action. **Overview** returns from a selection without changing filters, axes or the camera.
 
 After applying a comparison, click **Open Change Graph** in the Changes title bar, or run **Agent Diff Review: Open Change Graph**. The graph opens in its own editor tab. Cards show classes, interfaces, functions, methods and fields from TypeScript/JavaScript, Python, C++, Java and C# snapshots. Every card puts the entity name above its repository-relative file path. Added, modified and removed members carry A/M/D badges and `+added −removed` line counts. Class totals count each changed line once, including captured C++ member definitions in other files.
 
@@ -29,11 +31,15 @@ Select a card or member to see its full signature, owner, exact location, line c
 
 Double-click a graph card heading or member, or focus it and press **Enter**, to open its diff directly. A single click shows Details; **Space** also selects a focused item. **Escape** dismisses Other changes and returns focus to its button. Opening Other changes focuses its file list. Choosing a file shows Details and focuses **Open file diff**, ready for **Enter**. Expanding a card focuses its first newly revealed member; paging focuses the first member on the next page, and collapsing returns focus to the card heading.
 
+In a saved review diff, the editor title bar offers **Open Previous Changed File** and **Open Next Changed File**. They follow the folders-first, natural file order used by Changes, wrap at either end, and reuse a native preview tab. Navigation stays within that diff's saved snapshot, including earlier snapshots, and focuses the original side for removed files. A brief status message shows the file's position. These actions appear only when the review has multiple files and do not assign default keyboard shortcuts.
+
 Following a related symbol brings its selected member into view and moves keyboard focus to it. Exploring a file from the overview focuses its first symbol. **All files** returns focus to that file or a matching component; with no results, it focuses search. If analysis fails, **Retry analysis** rebuilds the same saved graph in its existing tab while keeping the view settings. **Open Change Graph** also retries an already-open failed comparison in that tab.
 
 In long lists, **Show more** moves focus to the first new file, related symbol or usage action.
 
 Reloading VS Code restores graph tabs with their original saved snapshot, selection, filters and camera position. If the saved review is unavailable, the unusable tab closes with a message explaining how to reopen the graph.
+
+If panning leaves every card off-screen, the footer offers **Show selection**, or **Fit graph** when nothing is selected. Recovery is explicit; reloading keeps the saved camera until you choose to move it.
 
 Drag the background or scroll to pan. Hold **Shift** while scrolling to pan sideways. Ctrl/⌘ + scroll and the zoom buttons change scale. **Fit** frames the visible graph. Search finds symbols and paths, filters select change kinds, and **Context** includes directly connected context from the captured files. Expanded members follow the change filters; narrowing filters keeps the remaining members visible. Large comparisons start with a file overview; expand a file to inspect its entities. Cards outside the viewport are not rendered, and large member/relationship lists load in batches. **Other changes** keeps imports, configuration, unsupported languages, parse notices and omitted files accessible through their file diffs.
 

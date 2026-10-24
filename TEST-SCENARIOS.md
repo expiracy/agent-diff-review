@@ -1,5 +1,31 @@
 # First-version scenarios
 
+## PR reviewer workflow — follow-up
+
+Checkpoint `4ddd966` was committed and pushed to origin/main before starting this pass. Baseline: 64 unit tests and full browser suites pass; working tree was clean.
+
+- [x] Show a useful whole-comparison overview with file status and exact text-line totals without double-counting members.
+- [x] Keep zero counts distinct from unavailable/binary counts, and show a bounded, safe list of the largest text changes.
+- [x] Identify the captured revisions/mode/date and allow returning to the overview without resetting filters or axes.
+- [x] Recover an off-screen graph through an explicit action without silently changing the saved camera.
+- [x] Move between changed files in native diffs using the original snapshot and the same natural order as Changes.
+- [x] Cover removed files, wrapping, single/empty reviews, invalid contexts, themes, narrow layouts and persistence.
+- [x] Package/install and verify the native reviewer journey with existing snapshot/settings intact.
+
+Use Canon TDD one behavior at a time. Data comes from the captured comparison; do not label inferred test coverage or runtime behavior as verified. Preserve native controls and avoid adding redundant actions.
+
+Verified v0.5.0 (24 October):
+
+- `npm test`: **69/69 pass** on Node 26.3.0. The five new navigation cases also pass on the minimum host's Node 20.16.0. The first sandboxed unit attempt could not listen on loopback; the complete rerun with local-network access passed. Logs: `/private/tmp/agent-pr-pass-final-unit.log`, `agent-pr-pass-node20-navigation.log`.
+- Complete graph/Comparison and axes browser suites pass on Chromium **151.0.7922.34** and **124.0.6367.29**. Coverage includes file totals without symbol double-counting; partial/all-unavailable and genuine zero counts; safe, bounded largest-file ranking without mutating browser-side files; provenance; Overview/filter/camera persistence; explicit off-screen recovery and 220px layouts. Logs: `/private/tmp/agent-pr-pass-final-webviews-{151,124}.log`. Screenshots retained in `/private/tmp/agent-pr-pass-webviews-{151,124}`; inspected the overview in light, dark, high contrast and with a long path at 220px.
+- Native integration passes on VS Code **1.142.0** and minimum **1.94.0**. Both exercise natural file ordering, original-side focus for deletion, preview reuse, forward/backward wrapping, a single-file no-op, older-review isolation, invalid editor context and captured metadata from a restored graph. Existing comparison, comment, bridge, graph retry and location assertions remain green. Logs: `/private/tmp/agent-pr-pass-final-native-{current,194}.log`. Minimum-host auxiliary process shutdown warning occurred after assertions passed; host and runner exited 0.
+- Behavioral red/green evidence is retained under `/private/tmp/agent-pr-pass-*`: overview, unavailable counts, largest-file actions, overview-back, provenance-host/UI, worktree-path, recovery, navigation-order/host/preview and overview-narrow. Characterization cases that already passed were retained without manufacturing failures. The narrow test exposed a real horizontal-overflow issue, now fixed with a specific file-link flex layout.
+- Packaged/installed **v0.5.0**, 46 package files. All **38** application/resource files match source, extracted VSIX and installation exactly. All 207 registry lock records remain consistent; dependency versions were not changed. Package/install logs: `/private/tmp/agent-pr-pass-{package,install}-050.log`.
+- Manual installed VS Code walkthrough: reload restored snapshot **22:36 on 22 October**, 17 files / 62 components, File × Changed lines, All connections, selected `button`, 40%, and the previously saved off-screen camera. Explicit **Show selection** then brought that card back, preserving selection/zoom. The overview correctly shows base `c3e205c2`, captured worktree, date, 11 added / 6 modified files and 2025 added / 13 removed lines. Direct graph.js diff opened with native previous/next file buttons; Next showed `scripts/build-graph.cjs` as a preview at File 4 of 17, Previous returned to graph.js at File 3 of 17. Walkthrough diffs were closed.
+- Manual native overview/Comparison/graph inspection passed in **Quiet Light, Dark Modern and Dark High Contrast** with the sidebar narrowed to approximately **180px**. Restored Quiet Light, approximately 300px sidebar, selected `button`, 40%, File × Changed lines, All connections and closed Layout. The captured comparison was never refreshed. The explicit recovered camera is retained so the selected card is visible.
+
+Limits: native manual checks were on macOS/VS Code 1.142; minimum-host integration is automated. Windows, remote development and physical modifier-wheel input remain unvalidated. The overview reports captured textual changes, not inferred runtime risk, test results or PR/CI metadata. File position is navigation, not a reviewed/unreviewed tracker. No known failing check remains for the retained changes.
+
 ## Native VS Code presentation — follow-up
 
 - [x] Inputs and actions follow VS Code corner-size tokens across both webviews, with compatible older-host fallbacks.

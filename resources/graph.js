@@ -8,7 +8,7 @@
   let axes = saved.axes && axisNames[saved.axes.horizontal] && axisNames[saved.axes.vertical] && saved.axes.horizontal !== saved.axes.vertical ? { ...saved.axes } : { horizontal: 'changes', vertical: 'status' };
   let axesLayout, layoutRevision = 0;
   let connectionsMode = saved.connectionsMode === 'selected' ? 'selected' : 'all', connectionSummary = '';
-  let graph, reviewId = saved.reviewId, symbols = new Map(), files = new Map(), cards = [], cardMap = new Map(), groups = [], rootIds = new Map(), membersByRoot = new Map();
+  let graph, snapshotInfo, capturedAt, reviewId = saved.reviewId, symbols = new Map(), files = new Map(), cards = [], cardMap = new Map(), groups = [], rootIds = new Map(), membersByRoot = new Map();
   const memberPages = new Map(Object.entries(saved.memberPages || {}));
   let selected = saved.selected || null, expanded = new Set(saved.expanded || []), revealed = new Set(), scope = saved.scope || '', query = saved.query || '';
   let camera = saved.camera || { x: 24, y: 24, zoom: 1 }, frame = 0, searchTimer, dragging, pendingFocus, initialized = false, analysisState = 'loading';
@@ -185,6 +185,13 @@
       if (target && document.activeElement !== target) target.focus({ preventScroll: true });
     }
     renderGuides();
+    const viewInset = contentInsets();
+    const actualVisible = visible.filter(card => camera.x + (card.x + cardWidth) * camera.zoom > viewInset.left && camera.x + card.x * camera.zoom < viewport.clientWidth && camera.y + (card.y + card.height) * camera.zoom > viewInset.top && camera.y + card.y * camera.zoom < viewport.clientHeight);
+    const lostView = analysisState === 'ready' && cards.length > 0 && !actualVisible.length;
+    const recovery = byId('recover-view'); recovery.hidden = !lostView;
+    recovery.textContent = selectionCard() ? 'Show selection' : 'Fit graph';
+    recovery.title = selectionCard() ? 'Bring the selected component into view' : 'Bring the graph back into view';
+    document.querySelector('footer').dataset.recovery = String(lostView);
     const visibleKey = `${layoutRevision}:${connectionsMode}:${visible.map(card => card.id).join(',')}:${selected?.kind}:${selected?.id}:${axesLayout ? `${camera.x},${camera.y},${camera.zoom},${viewport.clientWidth},${viewport.clientHeight}` : ''}`;
     if (visibleKey !== lastVisibleKey) {
       const inset = contentInsets();
@@ -192,7 +199,7 @@
       drawEdges(connectionIds); lastVisibleKey = visibleKey;
     }
     if (focusedEdge && document.activeElement?.dataset.edge !== focusedEdge) [...cardLayer.querySelectorAll('[data-edge]')].find(node => node.dataset.edge === focusedEdge)?.focus({ preventScroll: true });
-    if (graph && analysisState === 'ready') byId('status').textContent = `${scope || `${graph.files.length} files`} · ${cards.some(card => card.file) ? 'File overview — select a file to explore' : `${cards.length} components`}${inViewport.length > 160 ? ' · Zoom in to see more components' : ''}${connectionSummary}`;
+    if (graph && analysisState === 'ready') byId('status').textContent = `${scope || `${graph.files.length} files`} · ${cards.some(card => card.file) ? 'File overview — select a file to explore' : `${cards.length} components`}${inViewport.length > 160 ? ' · Zoom in to see more components' : ''}${connectionSummary}${lostView ? ' · No components in view' : ''}`;
   }
   function contentInsets() { return layoutMode === 'axes' ? { left: viewport.clientWidth < 500 ? 80 : 112, top: 52 } : { left: 0, top: 0 }; }
   function renderGuides() {
@@ -308,7 +315,17 @@
     label.remove();
   }
 
-  function contextTopbar() { const node = element('div', 'context-label', 'Details'); node.prepend(icon('info')); return node; }
+  function contextTopbar() {
+    const node = element('div', 'context-label', 'Details'); node.prepend(icon('info'));
+    if (selected) {
+      const overview = button('Overview', () => {
+        selected = null; pendingFocus = undefined; rebuild(); context.scrollTop = 0;
+        const heading = context.querySelector('h2'); if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
+      }, 'toolbar-button overview-back');
+      overview.prepend(icon('arrow-left')); overview.title = 'Return to the whole saved comparison'; overview.setAttribute('aria-label', 'Review overview'); node.append(overview);
+    }
+    return node;
+  }
   function contextHeading(kind, title) {
     const [type, status] = kind.split(' · '), heading = element('div', 'selection-heading'), typeRow = element('div', 'selection-kind');
     typeRow.append(symbolIcon(type.toLowerCase()), element('span', '', type));
@@ -338,7 +355,61 @@
   }
   function selectEdge(id) { selected = { kind: 'edge', id }; renderContext(); schedule(); persist(); }
   function selectFile(filePath) { selected = { kind: 'file', id: filePath }; renderContext(); schedule(); setOtherOpen(false); persist(); }
+  function renderOverview() {
+    const overview = element('div', 'review-overview'), heading = element('div', 'selection-heading');
+    heading.append(element('h2', '', 'Review overview'));
+    const intro = element('p', 'scope-note', 'Whole saved comparison. Graph filters do not change these totals.');
+    const fileCount = element('strong', 'overview-files', `${graph.files.length} changed file${graph.files.length === 1 ? '' : 's'}`); fileCount.id = 'overview-files';
+    const statusCounts = element('div', 'overview-statuses'); statusCounts.id = 'overview-statuses';
+    for (const [status, name] of [['added', 'added'], ['modified', 'modified'], ['deleted', 'removed']]) {
+      const count = graph.files.filter(file => file.status === status).length;
+      if (count) statusCounts.append(element('span', status, `${count} ${name}`));
+    }
+    const totals = { added: 0, removed: 0 };
+    for (const file of graph.files) if (file.changes) { totals.added += file.changes.added; totals.removed += file.changes.removed; }
+    const unavailable = graph.files.filter(file => !file.changes).length;
+    const lines = element('div', 'overview-lines'); lines.id = 'overview-lines';
+    lines.append(element('span', 'meta-label', unavailable ? 'Available text line changes' : 'Text line changes'), counts(unavailable === graph.files.length ? null : totals, true));
+    overview.append(heading, intro, fileCount, statusCounts, lines);
+    if (unavailable) { const note = element('p', 'scope-note', `Line counts unavailable for ${unavailable} file${unavailable === 1 ? '' : 's'}.`); note.id = 'overview-unavailable'; overview.append(note); }
+    if (snapshotInfo) {
+      const provenance = element('div', 'overview-provenance'); provenance.id = 'overview-provenance';
+      for (const [side, label] of [['base', 'Base'], ['target', 'Compare']]) {
+        const endpoint = snapshotInfo[side];
+        const value = element('span', 'signature', endpoint.kind === 'worktree' ? `Captured working tree · ${endpoint.value}` : `${endpoint.label} · ${endpoint.value.slice(0, 8)}`);
+        value.dataset.endpoint = side; value.title = endpoint.value; metadata(label, value, provenance);
+      }
+      const mode = element('span', '', snapshotInfo.mode === 'merge-base' ? 'Branch changes · since common ancestor' : 'Exact differences'); mode.id = 'overview-mode'; metadata('Show', mode, provenance);
+      overview.append(provenance);
+    }
+    if (capturedAt) {
+      const date = new Date(capturedAt), time = element('time', '', date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));
+      time.id = 'overview-captured'; time.dateTime = capturedAt; time.title = date.toLocaleString(); metadata('Captured', time, overview);
+    }
+    const largest = graph.files.filter(file => file.changes && file.changes.added + file.changes.removed > 0)
+      .sort((a, b) => b.changes.added + b.changes.removed - a.changes.added - a.changes.removed || a.path.localeCompare(b.path, undefined, { numeric: true })).slice(0, 5);
+    if (largest.length) {
+      const section = element('section', 'overview-largest'); section.id = 'overview-largest';
+      section.append(element('h3', 'overview-section-label', 'Largest text changes'));
+      const list = element('ul', 'overview-file-list');
+      for (const file of largest) {
+        const row = element('li', 'overview-file'), content = element('div', 'overview-file-content');
+        const name = button('', () => { selectFile(file.path); context.querySelector('.open-diff')?.focus(); }, 'link overview-file-name');
+        name.dataset.reviewFile = file.path; name.title = file.path; name.setAttribute('aria-label', `Inspect ${file.path}`);
+        name.append(symbolIcon('file'), element('span', 'overview-file-path', file.path));
+        const meta = element('div', 'overview-file-meta');
+        meta.append(element('span', file.status, { added: 'Added', modified: 'Modified', deleted: 'Removed' }[file.status] || file.status), counts(file.changes));
+        content.append(name, meta);
+        const open = button('', () => vscode.postMessage({ action: 'open-file', filePath: file.path }), 'relation-action');
+        open.append(icon('git-compare')); open.title = 'Open captured file diff'; open.setAttribute('aria-label', `Open diff for ${file.path}`);
+        row.append(content, open); list.append(row);
+      }
+      section.append(list); overview.append(section);
+    }
+    context.replaceChildren(contextTopbar(), overview);
+  }
   function renderContext() {
+    if (!selected && graph?.files.length) { renderOverview(); return; }
     if (!selected || !graph) { const empty = element('div', 'context-empty'); empty.append(icon('symbol-class'), element('strong', '', 'Select a symbol'), element('p', '', 'Explore its changes, dependencies and usages.')); context.replaceChildren(contextTopbar(), empty); return; }
     if (selected.kind === 'file') {
       const file = files.get(selected.id); if (!file) return;
@@ -398,6 +469,10 @@
     const inset = contentInsets();
     camera.zoom = Math.max(minZoom, Math.min(1, (viewport.clientWidth - inset.left - 48) / width, (viewport.clientHeight - inset.top - 75) / height)); camera.x = inset.left + 24; camera.y = inset.top + 24; schedule(); persist();
   }
+  function selectionCard() {
+    if (selected?.kind === 'symbol') { const symbol = symbols.get(selected.id); return symbol && (cardMap.get(rootFor(symbol)) ?? cardMap.get(`file:${symbol.filePath}`)); }
+    if (selected?.kind === 'file') return cardMap.get(`file:${selected.id}`) ?? cards.find(card => card.symbol?.filePath === selected.id);
+  }
   function keepGraphVisible() {
     const visible = cards.some(card => {
       const left = camera.x + card.x * camera.zoom, top = camera.y + card.y * camera.zoom;
@@ -427,12 +502,14 @@
   }
   window.addEventListener('message', event => {
     const message = event.data; if (message?.type !== 'graph') return;
+    snapshotInfo = message.snapshot; capturedAt = message.createdAt;
     if (typeof message.reviewId === 'string') reviewId = message.reviewId;
     else if (message.graph) reviewId = message.graph.reviewId;
     byId('comparison').textContent = message.comparison || '';
     byId('snapshot').textContent = message.createdAt ? `Snapshot ${new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
     byId('snapshot').title = message.createdAt ? new Date(message.createdAt).toLocaleString() : '';
     analysisState = message.error ? 'error' : message.graph ? 'ready' : 'loading';
+    if (analysisState !== 'ready') { byId('recover-view').hidden = true; document.querySelector('footer').dataset.recovery = 'false'; }
     byId('notice').tabIndex = analysisState === 'error' ? 0 : -1;
     document.body.setAttribute('aria-busy', String(analysisState === 'loading'));
     byId('retry-analysis').hidden = analysisState !== 'error';
@@ -486,7 +563,7 @@
   }
   function changeLayout() {
     updateLayoutControls(); layout();
-    const selectedCard = selected?.kind === 'symbol' ? cardMap.get(rootFor(symbols.get(selected.id))) : selected?.kind === 'file' ? cardMap.get(`file:${selected.id}`) : undefined;
+    const selectedCard = selectionCard();
     if (selectedCard) centerCard(selectedCard); else fitCamera();
     schedule(); persist();
   }
@@ -534,6 +611,11 @@
     else byId('search').focus({ preventScroll: true });
   });
   byId('fit').addEventListener('click', () => fitCamera()); byId('zoom-in').addEventListener('click', () => zoom(1.2)); byId('zoom-out').addEventListener('click', () => zoom(1 / 1.2));
+  byId('recover-view').addEventListener('click', () => {
+    const card = selectionCard();
+    if (card) { centerCard(card); pendingFocus = selected?.kind === 'symbol' && (card.id === selected.id || card.members.some(member => member.id === selected.id)) ? selected.id : card.id; persist(); }
+    else { fitCamera(); byId('fit').focus({ preventScroll: true }); }
+  });
   cardLayer.addEventListener('focusin', event => {
     if (!event.target.matches(':focus-visible')) return;
     const rect = event.target.getBoundingClientRect(), view = viewport.getBoundingClientRect(), inset = contentInsets();

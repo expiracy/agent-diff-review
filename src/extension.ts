@@ -10,6 +10,7 @@ import { ComparisonView } from './comparison-view.ts';
 import { GraphView, type GraphLocation } from './graph-view.ts';
 import { comparisonSources, endpointLabel, matchesComparison, swapComparison } from './comparison-selection.ts';
 import { COMMENT_STATES, commentStatus } from './comment-workflow.ts';
+import { adjacentReviewFile, type ReviewFileTarget } from './review-navigation.ts';
 
 const SCHEME = 'agent-review';
 const CONTROLLER = 'agent-diff-review';
@@ -82,6 +83,8 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     register('selectAgent', () => this.selectAgent());
     register('send', (argument: unknown) => this.send(sendOptions(argument)));
     register('openDiff', (entry: TreeEntry) => this.openDiff(entry.reviewId!, entry.filePath!));
+    register('nextFile', (argument?: unknown) => this.navigateFile(1, argument));
+    register('previousFile', (argument?: unknown) => this.navigateFile(-1, argument));
     register('openGraph', async (entry?: TreeEntry) => {
       await this.ensureRepository();
       const review = entry?.reviewId ? this.store!.review(entry.reviewId) : this.currentReview;
@@ -104,6 +107,8 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     register('clearNeedsChanges', argument => this.store!.markNeedsChanges(this.noteFromArgument(argument).id, false));
     register('reviewLatestComment', argument => this.reviewLatestComment(this.noteFromArgument(argument).id));
     register('sendCommentReview', argument => this.send(undefined, this.noteFromArgument(argument).reviewId));
+    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(() => this.updateFileNavigationContext()), vscode.window.tabGroups.onDidChangeTabs(() => this.updateFileNavigationContext()));
+    this.updateFileNavigationContext();
   }
 
   async initialize(): Promise<void> {
@@ -246,10 +251,35 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     await this.startComparison(comparisonSources(review));
   }
 
-  async openDiff(reviewId: string, filePath: string): Promise<void> {
+  async openDiff(reviewId: string, filePath: string, preview = false): Promise<void> {
     const review = this.store!.review(reviewId);
-    const command = this.diffCommand(review, filePath, false);
+    const command = this.diffCommand(review, filePath, preview);
     await vscode.commands.executeCommand(command.command, ...command.arguments!);
+  }
+
+  private navigationEntry(argument?: unknown) {
+    let uri = argument instanceof vscode.Uri ? argument : undefined;
+    if (!uri) {
+      const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+      if (input instanceof vscode.TabInputTextDiff) uri = input.modified;
+      else if (input instanceof vscode.TabInputText) uri = input.uri;
+    }
+    return uri ? this.lookup(uri) : undefined;
+  }
+
+  private updateFileNavigationContext(): void {
+    void vscode.commands.executeCommand('setContext', 'agentDiffReview.canNavigateFiles', (this.navigationEntry()?.review.files.length ?? 0) > 1);
+  }
+
+  async navigateFile(direction: -1 | 1, argument?: unknown): Promise<ReviewFileTarget | undefined> {
+    const entry = this.navigationEntry(argument);
+    if (!entry) throw new Error('Open a saved review diff before moving between changed files.');
+    const target = adjacentReviewFile(entry.review.files, entry.file.path, direction);
+    if (!target) return undefined;
+    const file = entry.review.files.find(file => file.path === target.path)!;
+    await this.openSnapshotLocation({ reviewId: entry.review.id, filePath: file.path, side: file.status === 'deleted' ? 'before' : 'after', startLine: 1, endLine: 1 }, true);
+    vscode.window.setStatusBarMessage(`File ${target.position} of ${target.total} · ${target.path}${entry.review.id !== this.currentReview?.id ? ' · Earlier snapshot' : ''}`, 4000);
+    return target;
   }
 
   private diffCommand(review: Comparison, filePath: string, preview: boolean): vscode.Command {
@@ -275,7 +305,7 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     await this.openSnapshotLocation(note);
   }
 
-  private async openSnapshotLocation(location: GraphLocation): Promise<void> {
+  private async openSnapshotLocation(location: GraphLocation, preview = false): Promise<void> {
     const { reviewId, filePath, side, startLine, endLine } = location;
     const review = this.store!.review(reviewId);
     if (!review.files.some(file => file.path === filePath)) throw new Error('This file is not in the review snapshot.');
@@ -283,7 +313,7 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     const document = await vscode.workspace.openTextDocument(uri);
     if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine || endLine > document.lineCount) throw new Error('This location is outside the captured file.');
     const range = new vscode.Range(startLine - 1, 0, endLine - 1, document.lineAt(endLine - 1).text.length);
-    await this.openDiff(reviewId, filePath);
+    await this.openDiff(reviewId, filePath, preview);
     let finishFocus!: () => void;
     const focused = new Promise<void>(resolve => {
       const listener = vscode.window.onDidChangeActiveTextEditor(editor => {
@@ -297,7 +327,7 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
       if (vscode.window.activeTextEditor?.document.uri.toString() !== uri.toString()) await focused;
     } finally { finishFocus(); }
     const editor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
-    if (!editor || vscode.window.activeTextEditor?.document.uri.toString() !== uri.toString()) { await vscode.window.showTextDocument(uri, { selection: range, preview: false }); return; }
+    if (!editor || vscode.window.activeTextEditor?.document.uri.toString() !== uri.toString()) { await vscode.window.showTextDocument(uri, { selection: range, preview }); return; }
     editor.selection = new vscode.Selection(range.start, range.end);
     editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
   }
@@ -510,6 +540,7 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     });
     void vscode.commands.executeCommand('setContext', 'agentDiffReview.hasReview', !!review);
     void vscode.commands.executeCommand('setContext', 'agentDiffReview.hasDrafts', drafts > 0);
+    this.updateFileNavigationContext();
     this.tree.description = review ? `${review.files.length} file${review.files.length === 1 ? '' : 's'}` : undefined;
     this.tree.message = review && !review.files.length ? `No changed files.\n${endpointLabel(review.base)} → ${endpointLabel(review.target)}` : undefined;
     if (!review) { this.status.hide(); return; }

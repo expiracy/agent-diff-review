@@ -57,6 +57,19 @@ export async function run(): Promise<void> {
   assert.equal(api.provideFileDecoration(vscode.Uri.file(path.join(repository, 'example.ts'))), undefined, 'Review decorations do not affect workspace files');
   await vscode.commands.executeCommand(button.command!.command, ...button.command!.arguments!);
   assert.ok(vscode.window.tabGroups.all.flatMap(group => group.tabs).some(tab => tab.input instanceof vscode.TabInputTextDiff && tab.input.modified.path.endsWith('/src/components/button.ts')), 'A nested file opens its own native diff');
+  const nextChangedFile = await vscode.commands.executeCommand('agentDiffReview.nextFile', button.resourceUri);
+  assert.equal(vscode.window.activeTextEditor?.document.uri.toString(), api.uri(review.id, 'src/removed.ts', 'before').toString(), 'Next file follows Changes order and focuses the original side of a removed file');
+  assert.deepEqual(nextChangedFile, { path: 'src/removed.ts', position: 2, total: 3 });
+  assert.equal(vscode.window.tabGroups.activeTabGroup.activeTab?.isPreview, true, 'Stepping through review files reuses a native preview tab rather than pinning each file');
+  assert.equal(api.currentReview!.id, review.id, 'File navigation preserves the active captured comparison');
+  const previousChangedFile = await vscode.commands.executeCommand('agentDiffReview.previousFile');
+  assert.deepEqual(previousChangedFile, { path: 'src/components/button.ts', position: 1, total: 3 }, 'Previous file resolves the active native diff without a supplied URI');
+  const previousWrapped = await vscode.commands.executeCommand('agentDiffReview.previousFile');
+  assert.deepEqual(previousWrapped, { path: 'example.ts', position: 3, total: 3 });
+  const nextWrapped = await vscode.commands.executeCommand('agentDiffReview.nextFile');
+  assert.deepEqual(nextWrapped, { path: 'src/components/button.ts', position: 1, total: 3 });
+  assert.equal(vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputTextDiff).length, 1, 'Walking through a new review keeps one reusable preview diff');
+
   const example = review.files.find(file => file.path === 'example.ts')!;
   await vscode.commands.executeCommand('agentDiffReview.openDiff', { reviewId: review.id, filePath: 'example.ts' });
   assert.ok(vscode.window.tabGroups.all.flatMap(group => group.tabs).some(tab => tab.input instanceof vscode.TabInputTextDiff), 'Native diff editor is open');
@@ -162,6 +175,11 @@ export async function run(): Promise<void> {
   await api.graph.openSymbol(graphReview.id, removedSymbol.id);
   assert.equal(vscode.window.activeTextEditor?.document.uri.toString(), api.uri(graphReview.id, 'graph.ts', 'before').toString(), 'Removed graph members open the before snapshot');
   assert.equal(vscode.window.activeTextEditor?.selection.start.line, 2, 'Graph navigation selects the exact member line');
+  const singleFileLocation = vscode.window.activeTextEditor!.document.uri.toString();
+  assert.equal(await vscode.commands.executeCommand('agentDiffReview.nextFile'), undefined, 'A single-file review has no unnecessary navigation operation');
+  assert.equal(vscode.window.activeTextEditor?.document.uri.toString(), singleFileLocation);
+  assert.equal(vscode.window.activeTextEditor?.selection.start.line, 2, 'A no-op leaves the current reviewed range alone');
+
   const usage = graph.edges.find(edge => edge.kind === 'calls')!;
   await api.store!.selectReview(review.id);
   await api.graph.openUsage(graphReview.id, usage.id);
@@ -169,13 +187,27 @@ export async function run(): Promise<void> {
   assert.equal(vscode.window.activeTextEditor?.selection.start.line, 1, 'A usage opens the exact call site');
   assert.equal(api.currentReview!.id, review.id, 'Graph navigation does not replace the active comparison');
   await assert.rejects(api.graph.openSymbol(graphReview.id, 'unknown-symbol'), /unavailable/);
-  const restoredReview: Comparison = { ...graphReview, id: randomUUID() };
+  await api.store!.selectReview(graphReview.id);
+  await api.openDiff(review.id, 'src/components/button.ts');
+  const earlierFile = await vscode.commands.executeCommand('agentDiffReview.nextFile');
+  assert.deepEqual(earlierFile, { path: 'src/removed.ts', position: 2, total: 3 }, 'File navigation uses the open diff snapshot even when the current comparison has different files');
+  assert.equal(vscode.window.activeTextEditor?.document.uri.toString(), api.uri(review.id, 'src/removed.ts', 'before').toString());
+  assert.equal(api.currentReview!.id, graphReview.id, 'Navigating an older review does not select it as the current comparison');
+  await api.store!.selectReview(review.id);
+
+  const restoredReview: Comparison = { ...graphReview, id: randomUUID(), base: { kind: 'ref', value: '1'.repeat(40), label: 'Earlier base' }, target: { kind: 'ref', value: '2'.repeat(40), label: 'Earlier target' }, mode: 'merge-base' };
   await api.store!.addReview(restoredReview);
   await api.store!.selectReview(review.id);
   const restoredPanel = vscode.window.createWebviewPanel('agentDiffReview.graph', 'Restoring graph', vscode.ViewColumn.Active, {});
+  const snapshotMessages: Array<{ graph?: ChangeGraph; snapshot?: unknown }> = [];
+  const sendRestored = restoredPanel.webview.postMessage.bind(restoredPanel.webview);
+  restoredPanel.webview.postMessage = message => { snapshotMessages.push(message); return sendRestored(message); };
+
   try {
     await api.restoreGraph(restoredPanel, { reviewId: restoredReview.id });
     assert.match(restoredPanel.webview.html, /Change graph/, 'Restoration recreates the graph page in the supplied native panel');
+    assert.deepEqual(snapshotMessages.find(message => message.graph)?.snapshot, { base: restoredReview.base, target: restoredReview.target, mode: restoredReview.mode }, 'A restored graph publishes its captured revisions, not the current comparison');
+
     assert.match(restoredPanel.webview.html, /graph-layout\.js/, 'Native graph pages include the shared axes bundle');
     assert.ok(restoredPanel.webview.html.indexOf('graph-layout.js') < restoredPanel.webview.html.indexOf('graph.js'), 'Axes load before the graph renderer');
     assert.ok(restoredPanel.webview.options.localResourceRoots?.some(uri => uri.fsPath === vscode.Uri.joinPath(extension.extensionUri, 'out').fsPath), 'The native webview permits its packaged layout bundle');
@@ -299,6 +331,11 @@ export async function run(): Promise<void> {
     await reopening?.catch(() => undefined);
     failedPanelSubscription.dispose(); failedPanel.dispose(); reopenView.dispose();
   }
+
+  await vscode.window.showTextDocument(vscode.Uri.file(path.join(repository, 'example.ts')), { preview: false });
+  const outsideReview = vscode.window.activeTextEditor!.document.uri.toString();
+  await assert.rejects(api.navigateFile(1), /Open a saved review diff/, 'Navigation outside a review gives guidance rather than opening unrelated captured content');
+  assert.equal(vscode.window.activeTextEditor?.document.uri.toString(), outsideReview);
   await vscode.commands.executeCommand('agentDiffReview.comparison.focus');
   console.log('VS Code integration assertions passed.');
   const pause = Number(process.env.AGENT_DIFF_REVIEW_TEST_PAUSE ?? 0);

@@ -2,7 +2,7 @@
   "name": "agent-diff-review",
   "displayName": "Agent Diff Review",
   "description": "Review branch and worktree diffs, leave line comments, and send feedback to your existing coding agent session.",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "publisher": "local-agent-tools",
   "license": "MIT",
   "private": true,
@@ -57,6 +57,8 @@
       { "command": "agentDiffReview.clearNeedsChanges", "title": "Clear Needs Changes", "icon": "$(circle-slash)" },
       { "command": "agentDiffReview.sendCommentReview", "title": "Send Drafts from This Snapshot", "icon": "$(send)" },
       { "command": "agentDiffReview.openDiff", "title": "Open Diff" },
+      { "command": "agentDiffReview.previousFile", "title": "Open Previous Changed File", "category": "Agent Diff Review", "icon": "$(arrow-left)", "enablement": "agentDiffReview.canNavigateFiles" },
+      { "command": "agentDiffReview.nextFile", "title": "Open Next Changed File", "category": "Agent Diff Review", "icon": "$(arrow-right)", "enablement": "agentDiffReview.canNavigateFiles" },
       { "command": "agentDiffReview.showReview", "title": "Open Review Snapshot" },
       { "command": "agentDiffReview.postComment", "title": "Add Comment", "enablement": "!commentIsEmpty" },
       { "command": "agentDiffReview.deleteComment", "title": "Delete Draft", "icon": "$(trash)" },
@@ -80,6 +82,10 @@
         { "command": "agentDiffReview.markNeedsChanges", "when": "view == agentDiffReview.comments && viewItem == openReviewComment", "group": "1_status@1" },
         { "command": "agentDiffReview.clearNeedsChanges", "when": "view == agentDiffReview.comments && viewItem == needsChangesReviewComment", "group": "1_status@1" },
         { "command": "agentDiffReview.sendCommentReview", "when": "view == agentDiffReview.comments && viewItem == draftReviewComment", "group": "2_send" }
+      ],
+      "editor/title": [
+        { "command": "agentDiffReview.previousFile", "when": "resourceScheme == agent-review && agentDiffReview.canNavigateFiles", "group": "navigation@1" },
+        { "command": "agentDiffReview.nextFile", "when": "resourceScheme == agent-review && agentDiffReview.canNavigateFiles", "group": "navigation@2" }
       ],
       "editor/context": [{ "command": "agentDiffReview.addComment", "when": "resourceScheme == agent-review", "group": "review" }],
       "comments/commentThread/context": [{ "command": "agentDiffReview.postComment", "when": "commentController == agent-diff-review", "group": "inline" }],

@@ -24,9 +24,74 @@ const fixture = (path, before, after) => ({ path, before, after, beforeHash: '',
         const errors = [];
         page.on('pageerror', e => errors.push(String(e)));
         await page.addInitScript(payload => { window.__messages = []; window.__state = JSON.parse(sessionStorage.getItem('graphState') || 'null'); window.acquireVsCodeApi = () => ({ getState: () => window.__state, setState: s => { window.__state = s; sessionStorage.setItem('graphState', JSON.stringify(s)); }, postMessage: m => { window.__messages.push(m); if (m.action === 'ready')
-                setTimeout(() => window.dispatchEvent(new MessageEvent('message', { data: payload })), 0); } }); }, { type: 'graph', graph, comparison: 'HEAD → Working tree', createdAt: '2026-10-22T10:00:00Z' });
+                setTimeout(() => window.dispatchEvent(new MessageEvent('message', { data: payload })), 0); } }); }, { type: 'graph', graph, comparison: 'HEAD → Working tree', createdAt: '2026-10-22T10:00:00Z', snapshot: { base: { kind: 'ref', label: 'main', value: 'a'.repeat(40) }, target: { kind: 'worktree', label: 'Working tree', value: '/projects/captured-review' }, mode: 'exact' } });
         await page.goto('file://' + directory + '/index.html');
         await page.waitForSelector('.node');
+        assert.equal(await page.getByRole('heading', { name: 'Review overview', exact: true }).count(), 1, 'An unselected graph starts with a useful review overview');
+        assert.equal(await page.locator('#overview-files').innerText(), '2 changed files');
+        assert.match(await page.locator('#overview-statuses').innerText(), /2 modified/);
+        assert.equal(await page.locator('#overview-lines .line-counts').getAttribute('aria-label'), '3 lines added, 4 lines removed', 'File totals count each textual change once, including non-symbol edits');
+        console.log('PASS whole-comparison overview with exact file and line totals');
+        assert.equal(await page.locator('#overview-provenance').count(), 1, 'The overview identifies the captured comparison');
+        assert.equal(await page.locator('[data-endpoint=base]').innerText(), 'main · aaaaaaaa');
+        assert.equal(await page.locator('[data-endpoint=base]').getAttribute('title'), 'a'.repeat(40), 'The complete pinned revision is available');
+        assert.equal(await page.locator('[data-endpoint=target]').innerText(), 'Captured working tree · /projects/captured-review', 'Worktree comparisons visibly identify the captured source folder');
+        assert.equal(await page.locator('#overview-mode').innerText(), 'Exact differences');
+        assert.equal(await page.locator('#overview-captured').getAttribute('datetime'), '2026-10-22T10:00:00Z');
+        console.log('PASS captured revision, worktree, mode and date provenance');
+
+        const unavailableOverview = { ...graph, reviewId: 'overview-unavailable', files: [...graph.files, { path: 'image.bin', status: 'added', changes: null, otherChanges: null, notice: 'Binary file.' }] };
+        await page.evaluate(graph => window.dispatchEvent(new MessageEvent('message', { data: { type: 'graph', graph } })), unavailableOverview);
+        assert.equal(await page.locator('#overview-unavailable').count(), 1, 'Unavailable line counts are explicitly identified');
+        assert.equal(await page.locator('#overview-unavailable').innerText(), 'Line counts unavailable for 1 file.');
+        assert.match(await page.locator('#overview-lines').innerText(), /Available text line changes/);
+        assert.equal(await page.locator('#overview-lines .line-counts').getAttribute('aria-label'), '3 lines added, 4 lines removed');
+        await page.evaluate(graph => window.dispatchEvent(new MessageEvent('message', { data: { type: 'graph', graph } })), graph);
+        console.log('PASS unavailable file counts remain separate from known text changes');
+        const onlyUnavailable = { ...unavailableOverview, reviewId: 'overview-binary-only', symbols: [], edges: [], files: unavailableOverview.files.filter(file => file.path === 'image.bin') };
+        await page.evaluate(graph => window.dispatchEvent(new MessageEvent('message', { data: { type: 'graph', graph } })), onlyUnavailable);
+        assert.equal(await page.locator('#overview-lines .line-counts').getAttribute('title'), 'Line counts unavailable');
+        assert.doesNotMatch(await page.locator('#overview-lines').innerText(), /No line changes/, 'An all-unavailable comparison is not described as zero changes');
+        const zeroOverview = { ...onlyUnavailable, reviewId: 'overview-zero', files: [{ path: 'mode-only.ts', status: 'modified', changes: { added: 0, removed: 0 }, otherChanges: { added: 0, removed: 0 } }] };
+        await page.evaluate(graph => window.dispatchEvent(new MessageEvent('message', { data: { type: 'graph', graph } })), zeroOverview);
+        assert.equal(await page.locator('#overview-unavailable').count(), 0);
+        assert.equal(await page.locator('#overview-lines .line-counts').getAttribute('aria-label'), '0 lines added, 0 lines removed');
+        assert.match(await page.locator('#overview-lines').innerText(), /No line changes/);
+        await page.evaluate(graph => window.dispatchEvent(new MessageEvent('message', { data: { type: 'graph', graph } })), graph);
+        console.log('PASS genuine zero changes remain distinct from all-unavailable counts');
+        assert.equal(await page.locator('#overview-largest').count(), 1, 'The overview offers concrete files to start reviewing');
+        assert.deepEqual(await page.locator('#overview-largest [data-review-file]').evaluateAll(nodes => nodes.map(node => node.dataset.reviewFile)), graph.files.map(file => file.path), 'The largest file is listed first using file totals');
+        await page.evaluate(() => window.__messages = []);
+        await page.getByRole('button', { name: `Open diff for ${graph.files[1].path}`, exact: true }).click();
+        assert.deepEqual(await page.evaluate(() => window.__messages), [{ action: 'open-file', filePath: graph.files[1].path }], 'A file can be opened directly from the overview');
+        assert.equal(await page.locator('#context img').count(), 0, 'HTML-like file names remain plain text');
+        await page.evaluate(() => window.__messages = []);
+        console.log('PASS largest-change file entry points and safe direct diff requests');
+        const manyOverview = { ...graph, reviewId: 'overview-ranked', files: Array.from({ length: 12 }, (_, i) => ({ path: `file${i}.ts`, status: 'modified', changes: { added: i, removed: 0 }, otherChanges: { added: 0, removed: 0 } })) };
+        const originalPaths = manyOverview.files.map(file => file.path);
+        await page.evaluate(graph => { window.__overviewFixture = graph; window.dispatchEvent(new MessageEvent('message', { data: { type: 'graph', graph } })); }, manyOverview);
+        assert.deepEqual(await page.locator('#overview-largest [data-review-file]').evaluateAll(nodes => nodes.map(node => node.dataset.reviewFile)), ['file11.ts', 'file10.ts', 'file9.ts', 'file8.ts', 'file7.ts'], 'The suggested starting list is bounded and ordered by actual changed lines');
+        assert.deepEqual(await page.evaluate(() => window.__overviewFixture.files.map(file => file.path)), originalPaths, 'Ranking does not mutate the graph file order');
+        await page.evaluate(graph => window.dispatchEvent(new MessageEvent('message', { data: { type: 'graph', graph } })), graph);
+        console.log('PASS bounded largest-change ranking');
+        const longPath = `src/${'nested-folder/'.repeat(12)}component-with-a-long-name.ts`;
+        const narrowOverview = { ...graph, reviewId: 'overview-narrow', files: [{ ...graph.files[0], path: longPath }] };
+        await page.setViewportSize({ width: 220, height: 600 });
+        await page.evaluate(graph => window.dispatchEvent(new MessageEvent('message', { data: { type: 'graph', graph } })), narrowOverview);
+        assert.equal(await page.locator('#context').evaluate(node => node.scrollWidth <= node.clientWidth), true, 'Long overview file paths do not force horizontal scrolling in a narrow editor');
+        await page.getByRole('button', { name: `Open diff for ${longPath}`, exact: true }).scrollIntoViewIfNeeded();
+        await page.screenshot({ path: path.join(directory, 'overview-narrow.png') });
+        await page.getByRole('button', { name: `Inspect ${longPath}`, exact: true }).press('Space');
+        assert.equal(await page.locator('#context .open-diff').evaluate(node => document.activeElement === node), true, 'Inspecting a suggested file focuses its native diff action');
+        await page.setViewportSize({ width: 1280, height: 900 });
+        await page.evaluate(graph => window.dispatchEvent(new MessageEvent('message', { data: { type: 'graph', graph } })), graph);
+        console.log('PASS long overview paths and keyboard file inspection at 220px');
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+
+
+
+
         await page.evaluate(() => document.body.classList.add('vscode-light'));
         const styling = await page.locator('.member code').first().evaluate(node => ({ family: getComputedStyle(node).fontFamily, background: getComputedStyle(node).backgroundColor, color: getComputedStyle(node).color }));
         assert.match(styling.family, /JetBrains Mono/);
@@ -37,6 +102,25 @@ const fixture = (path, before, after) => ({ path, before, after, beforeHash: '',
         const id = name => graph.symbols.find(s => s.name === name).id;
         await page.locator(`.node-head[data-symbol="${id('Checkout')}"]`).click();
         assert.equal(await page.locator('#context h2').innerText(), 'Checkout');
+        assert.equal(await page.getByRole('button', { name: 'Review overview', exact: true }).count(), 1, 'A selected item offers a clear way back to the whole review');
+        await page.getByRole('checkbox', { name: 'Removed', exact: true }).uncheck();
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        await page.locator(`.node-head[data-symbol="${id('Checkout')}"]`).click();
+        const beforeOverview = await page.evaluate(() => window.__state);
+        await page.getByRole('button', { name: 'Review overview', exact: true }).press('Space');
+        assert.equal(await page.locator('#context h2').innerText(), 'Review overview');
+        assert.equal(await page.evaluate(() => window.__state.selected), null);
+        for (const key of ['camera', 'query', 'scope', 'statuses', 'axes', 'layoutMode']) assert.deepEqual(await page.evaluate(key => window.__state[key], key), beforeOverview[key], `Overview retains ${key}`);
+        assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Review overview', 'Returning to overview gives keyboard users a clear context');
+        await page.reload();
+        await page.waitForSelector('.node');
+        assert.equal(await page.locator('#context h2').innerText(), 'Review overview');
+        assert.equal(await page.getByRole('checkbox', { name: 'Removed', exact: true }).isChecked(), false);
+        await page.getByRole('checkbox', { name: 'Removed', exact: true }).check();
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        await page.locator(`.node-head[data-symbol="${id('Checkout')}"]`).click();
+        console.log('PASS overview navigation preserves graph filters, camera, layout and reload state');
+
         assert.equal(await page.evaluate(() => window.__messages.some(message => message.action === 'open-symbol')), false, 'A single click only shows Details');
         assert.match(await page.locator('#context .line-counts').getAttribute('aria-label'), /2 lines added, 3 lines removed/);
         await page.locator(`.member[data-symbol="${id('removed')}"]`).dblclick();
@@ -78,10 +162,18 @@ const fixture = (path, before, after) => ({ path, before, after, beforeHash: '',
         await page.locator('#search').fill('');
         await page.waitForTimeout(200);
         await page.locator(`.node-head[data-symbol="${id('Checkout')}"]`).click();
+        const captureOverview = async name => {
+            await page.getByRole('button', { name: 'Review overview', exact: true }).click();
+            await page.screenshot({ path: path.join(directory, `overview-${name}.png`) });
+            await page.locator(`.node-head[data-symbol="${id('Checkout')}"]`).click();
+        };
+        await captureOverview('light');
         await page.screenshot({ path: directory + '/graph.png' });
         await page.evaluate(() => { document.body.className = 'vscode-dark'; document.documentElement.style.cssText = '--vscode-button-secondaryBackground:#3a3d41;--vscode-button-secondaryForeground:#ccc;--vscode-button-secondaryHoverBackground:#45494e;--vscode-foreground:#ccc;--vscode-descriptionForeground:#999;--vscode-editor-background:#1f1f1f;--vscode-sideBar-background:#181818;--vscode-editorWidget-background:#252526;--vscode-editorWidget-border:#454545;--vscode-panel-border:#333;--vscode-input-background:#313131;--vscode-input-foreground:#ccc;--vscode-focusBorder:#007fd4;--vscode-inputOption-activeBackground:#094771;--vscode-inputOption-activeForeground:#fff;--vscode-inputOption-activeBorder:#007fd4;--vscode-list-hoverBackground:#2a2d2e;--vscode-list-inactiveSelectionBackground:#37373d;--vscode-symbolIcon-classForeground:#ee9d28;--vscode-symbolIcon-methodForeground:#b180d7;--vscode-symbolIcon-fieldForeground:#75beff;--vscode-editorIndentGuide-background1:#404040;--vscode-gitDecoration-addedResourceForeground:#81b88b;--vscode-gitDecoration-deletedResourceForeground:#c74e39;--vscode-gitDecoration-modifiedResourceForeground:#e2c08d;'; });
+        await captureOverview('dark');
         await page.screenshot({ path: directory + '/dark.png' });
         await page.evaluate(() => { document.body.className = 'vscode-high-contrast'; document.documentElement.style.cssText += '--vscode-button-secondaryBackground:#000;--vscode-button-secondaryForeground:#fff;--vscode-editor-background:#000;--vscode-editorWidget-background:#000;--vscode-sideBar-background:#000;--vscode-foreground:#fff;--vscode-contrastBorder:#6fc3df;--vscode-focusBorder:#f38518;'; });
+        await captureOverview('high-contrast');
         await page.screenshot({ path: directory + '/high-contrast.png' });
         console.log('PASS theme typography reset, editor-font fallback, bundled icons, dark and high-contrast layouts');
         const viewport = await page.locator('#viewport').boundingBox();

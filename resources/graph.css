@@ -131,11 +131,26 @@ select { min-width: 0; height: 26px; padding: 2px 5px; border: 1px solid var(--v
 #context { min-width: 0; overflow: auto; padding: 0 0 16px; border-left: 1px solid var(--graph-border); background: var(--vscode-sideBar-background); }
 .context-label { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 7px; height: 22px; padding: 0 var(--review-content-padding); background: var(--vscode-sideBar-background); border-bottom: 1px solid var(--graph-border); font-size: var(--vscode-fontSize-label1, 11px); font-weight: 600; }
 .context-label > .codicon { color: var(--vscode-icon-foreground); font-size: 16px; }
+.context-label .overview-back { margin-left: auto; height: 22px; font-size: 11px; gap: 4px; }
 .context-empty { display: flex; flex-direction: column; align-items: center; padding: 56px 26px 24px; text-align: center; color: var(--graph-muted); }
 .context-empty > .codicon { font-size: 30px; opacity: .45; margin-bottom: 14px; }
 .context-empty strong { font-size: 13px; font-weight: 500; color: var(--vscode-foreground); }
 .context-empty p { max-width: 220px; margin: 8px 0 0; font-size: 12px; line-height: 1.5; }
 .selection-heading { padding: 12px var(--review-content-padding) 8px; }
+.review-overview .scope-note { margin-top: 0; }
+.overview-files { display: block; margin: 12px var(--review-content-padding) 4px; font-size: 13px; font-weight: 600; }
+.overview-statuses { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 var(--review-content-padding); font-size: 11px; }
+.overview-lines { display: flex; flex-direction: column; gap: 4px; margin: 12px var(--review-content-padding); }
+.overview-largest { border-top: 1px solid var(--graph-border); }
+.overview-section-label { margin: 12px var(--review-content-padding) 6px; font-size: 11px; font-weight: 600; }
+.overview-file-list { list-style: none; margin: 0; padding: 0; }
+.overview-file { display: flex; align-items: flex-start; gap: 8px; padding: 6px var(--review-content-padding); }
+.overview-file:hover { background: var(--vscode-list-hoverBackground); }
+.overview-file-content { flex: 1; min-width: 0; }
+.link.overview-file-name { display: flex; align-items: center; gap: 6px; color: var(--vscode-foreground); }
+.overview-file-name > .codicon { flex: none; }
+.overview-file-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overview-file-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 3px 0 0 22px; font-size: 10px; color: var(--graph-muted); }
 .selection-kind { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--graph-muted); text-transform: capitalize; }
 .selection-kind .state-badge { margin-left: auto; font-size: 10px; }
 #context h2 { margin: 7px 0 0; font-family: var(--graph-ui-font); font-size: 14px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
@@ -176,6 +191,8 @@ select { min-width: 0; height: 26px; padding: 2px 5px; border: 1px solid var(--v
 footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 24px; border-top: 1px solid var(--graph-border); padding: 3px var(--review-content-padding); color: var(--graph-muted); font-size: 10px; }
 #status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .navigation-hint { white-space: nowrap; }
+.footer-recovery { flex: none; width: auto; padding: 0 3px; font-size: 11px; min-height: 20px; }
+footer[data-recovery=true] .navigation-hint { display: none; }
 body.vscode-high-contrast .node, body.vscode-high-contrast-light .node { border-color: var(--vscode-contrastBorder); box-shadow: none; }
 body.vscode-high-contrast .graph-edge, body.vscode-high-contrast-light .graph-edge { color: var(--vscode-foreground); }
 body.vscode-high-contrast .graph-edge.active, body.vscode-high-contrast-light .graph-edge.active { color: var(--vscode-focusBorder); stroke-width: 2; }
