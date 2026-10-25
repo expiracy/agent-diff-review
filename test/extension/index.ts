@@ -10,6 +10,7 @@ import type { ReviewExtension } from '../../src/extension.ts';
 import type { Batch, Note } from '../../src/review.ts';
 import { GraphView, type GraphLocation } from '../../src/graph-view.ts';
 import type { ChangeGraph } from '../../src/change-graph.ts';
+import type { GraphComments } from '../../src/graph-comments.ts';
 
 export async function run(): Promise<void> {
   console.log(`Integration runtime: VS Code ${vscode.version}, Node ${process.versions.node}, Electron ${process.versions.electron}, Chromium ${process.versions.chrome}`);
@@ -196,11 +197,11 @@ export async function run(): Promise<void> {
   assert.equal(api.currentReview!.id, graphReview.id, 'Navigating an older review does not select it as the current comparison');
   await api.store!.selectReview(review.id);
 
-  const restoredReview: Comparison = { ...graphReview, id: randomUUID(), base: { kind: 'ref', value: '1'.repeat(40), label: 'Earlier base' }, target: { kind: 'ref', value: '2'.repeat(40), label: 'Earlier target' }, mode: 'merge-base' };
+  const restoredReview: Comparison = { ...graphReview, id: randomUUID(), base: { kind: 'ref', value: '1'.repeat(40), label: 'Earlier base' }, target: { kind: 'ref', value: review.base.value, label: 'Earlier target' }, mode: 'merge-base' };
   await api.store!.addReview(restoredReview);
   await api.store!.selectReview(review.id);
   const restoredPanel = vscode.window.createWebviewPanel('agentDiffReview.graph', 'Restoring graph', vscode.ViewColumn.Active, {});
-  const snapshotMessages: Array<{ graph?: ChangeGraph; snapshot?: unknown }> = [];
+  const snapshotMessages: Array<{ type?: string; graph?: ChangeGraph; snapshot?: unknown; feedback?: GraphComments }> = [];
   const sendRestored = restoredPanel.webview.postMessage.bind(restoredPanel.webview);
   restoredPanel.webview.postMessage = message => { snapshotMessages.push(message); return sendRestored(message); };
 
@@ -215,6 +216,31 @@ export async function run(): Promise<void> {
     await api.graph.openSymbol(restoredReview.id, removedSymbol.id);
     assert.equal(vscode.window.activeTextEditor?.document.uri.toString(), api.uri(restoredReview.id, 'graph.ts', 'before').toString(), 'A restored graph navigates to its original saved review');
     assert.equal(api.currentReview!.id, review.id, 'Restoring an older graph leaves the active comparison unchanged');
+    const graphFeedbackNote = await api.store!.addNote(restoredReview.id, 'graph.ts', 'before', 3, 3, 'Feedback from the normal diff should appear on the graph.');
+    const feedbackMessage = snapshotMessages.find(message => message.type === 'comments' && message.feedback?.notes.some(note => note.id === graphFeedbackNote.id));
+    assert.ok(feedbackMessage, 'Persisting a normal diff comment publishes a live update to its saved graph');
+    assert.deepEqual(feedbackMessage.feedback!.symbols[removedSymbol.id], [graphFeedbackNote.id]);
+    assert.equal(api.currentReview!.id, review.id, 'Comment badge updates do not select another comparison');
+    const graphFeedbackBatch = await api.store!.submit(restoredReview.id, connection.id, 'Graph badge test feedback.');
+    await api.store!.reply(connection.id, graphFeedbackNote.id, 'The captured member is fixed and tested.');
+    const replyMessage = snapshotMessages.filter(message => message.type === 'comments').at(-1)!;
+    assert.equal(replyMessage.feedback!.notes.find(note => note.id === graphFeedbackNote.id)?.replies[0].body, 'The captured member is fixed and tested.', 'Agent replies are published live to the graph');
+    assert.deepEqual(replyMessage.feedback!.statuses[graphFeedbackNote.id], { id: 'review', label: 'Ready to review' });
+    await api.store!.acknowledge(connection.id, graphFeedbackBatch.id);
+    await api.store!.resolveNotes([graphFeedbackNote.id], true);
+    assert.equal(snapshotMessages.filter(message => message.type === 'comments').at(-1)?.feedback?.statuses[graphFeedbackNote.id].id, 'resolved', 'Resolved graph conversations remain visible with their shared review status');
+    const feedbackRestore = vscode.window.createWebviewPanel('agentDiffReview.graph', 'Restoring graph comments', vscode.ViewColumn.Active, {});
+    const feedbackRestoreMessages: Array<{ graph?: ChangeGraph; feedback?: GraphComments }> = [];
+    const publishRestoredFeedback = feedbackRestore.webview.postMessage.bind(feedbackRestore.webview);
+    feedbackRestore.webview.postMessage = message => { feedbackRestoreMessages.push(message); return publishRestoredFeedback(message); };
+    try {
+      await api.restoreGraph(feedbackRestore, { reviewId: restoredReview.id });
+      const savedFeedback = feedbackRestoreMessages.find(message => message.graph)?.feedback!;
+      assert.deepEqual(savedFeedback.symbols[removedSymbol.id], [graphFeedbackNote.id], 'Restoring a graph restores its comment badge data');
+      assert.equal(savedFeedback.notes.find(note => note.id === graphFeedbackNote.id)?.replies.length, 1, 'Restored graph conversations include saved agent replies');
+      assert.equal(savedFeedback.statuses[graphFeedbackNote.id].id, 'resolved');
+      assert.equal(api.currentReview!.id, review.id);
+    } finally { feedbackRestore.dispose(); }
   } finally { restoredPanel.dispose(); }
   const unavailablePanel = vscode.window.createWebviewPanel('agentDiffReview.graph', 'Unavailable graph', vscode.ViewColumn.Active, {});
   let unavailableDisposed = false;
@@ -461,5 +487,5 @@ export async function run(): Promise<void> {
   await vscode.commands.executeCommand('agentDiffReview.comparison.focus');
   console.log('VS Code integration assertions passed.');
   const pause = Number(process.env.AGENT_DIFF_REVIEW_TEST_PAUSE ?? 0);
-  if (pause > 0) await new Promise(resolve => setTimeout(resolve, Math.min(pause, 120_000)));
+  if (pause > 0) { await api.graph.show(graphReview); await new Promise(resolve => setTimeout(resolve, Math.min(pause, 120_000))); }
 }

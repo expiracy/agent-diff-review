@@ -2,7 +2,7 @@
   "name": "agent-diff-review",
   "displayName": "Agent Diff Review",
   "description": "Review branch and worktree diffs, leave line comments, and send feedback to your existing coding agent session.",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "publisher": "local-agent-tools",
   "license": "MIT",
   "private": true,

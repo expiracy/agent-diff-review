@@ -1,5 +1,29 @@
 # First-version scenarios
 
+## Graph comment badges and conversations — v0.6.0
+
+- [x] Show native-style comment/reply badges on components and individual members, with file totals in graph file overviews.
+- [x] Match comments to their captured file and diff side; assign member feedback to that member and roll it up once to its component. Whole-component comments do not fan out to every member. Symbols sharing one native line range share that line's feedback without double-counting their component.
+- [x] Read original comments, agent replies, locations, timestamps and shared review status in graph Details without opening a diff.
+- [x] Publish live store updates and restore saved conversations while keeping snapshots isolated and graph settings intact. Resolved feedback stays readable.
+- [x] Bound long conversations to 20 comments per page; preserve keyboard focus and the visible reading position when replies arrive. Remove empty badges without stranding focus.
+- [x] Check safe text rendering, light/dark/high-contrast themes, 220px wrapping, compact-editor heading visibility, existing graph/Comparison/axes regressions and native VS Code integration.
+- [x] Package/install the verified build; preserve the user's in-progress native comment prompt.
+
+Executed results:
+
+- **76/76 unit tests pass** on Node 26.3.0 (`/private/tmp/agent-graph-badges-final-unit.log`). Six new projection tests cover member roll-up, whole components, original-side ranges, shared-line ambiguity, snapshot/file-only feedback and shared status labels.
+- Complete graph/Comparison and axes suites pass on Chromium **151.0.7922.34** and **124.0.6367.29** (`/private/tmp/agent-graph-badges-final-browser-{151,124}.log`). They cover component/member counts, replies, keyboard badge activation without diff messages, state/focus preservation, safe HTML-like text, bounded paging, foreign-snapshot rejection and narrow wrapping. New conversation screenshots were inspected in light, dark, high contrast and at 220px; artifacts are in `/private/tmp/agent-graph-badges-webviews-{151,124}`.
+- Native integration passes on VS Code **1.142.0** and a freshly pinned **1.94.0** (`/private/tmp/agent-graph-badges-final-native-{current,194}.log`). Native tests intercept real outgoing webview messages to verify live normal-diff comments, agent replies, resolved status, restored badge data and saved reply content. Existing comment creation/delivery, native context menus, graph restoration, comparison and file-navigation assertions remain green. The minimum host reports Node 20.16.0 / Electron 30.5.1 / Chromium 124.0.6367.243; its known auxiliary shutdown warning follows passing assertions, with runner exit 0.
+- The old cache directory labelled 1.94 had updated itself to **1.143.1** and changed executable name. Its additional passing run is recorded separately as `/private/tmp/agent-graph-badges-final-native-143.log` and is not counted as minimum-version evidence. Downloaded official 1.94.0 into `/private/tmp/agent-graph-badges-vscode-pinned-194`, checked package version and actual integration runtime, and reran successfully. Download log: `/private/tmp/agent-graph-badges-vscode-pinned-download.log`.
+- Canon TDD reds/greens are retained under `/private/tmp/agent-graph-badges-*`: projection, shared-line ownership, status labels, host publication, component/member badges, conversation reading, last-badge focus, paged-comment focus, reading position and compact heading visibility. Already-supported scenarios were kept as characterization checks. Two reply-fixture setup issues were corrected without changing product rules: a metadata-only dummy target was replaced with the real pinned HEAD for agent submission, and sent feedback was resolved rather than deleted.
+
+Actual native walkthrough: used the isolated VS Code **1.94.0** test workspace, with real stored comments and test-agent replies. Counter showed **5 comments / 1 reply**, its removed member **2 comments / 1 reply**, and value **1 comment**. Clicking the removed member badge kept the editor on Change graph and exposed its two original-side comments, Ready to review/Waiting for agent states, and the real agent reply in Details. This small native window exposed the sticky-heading overlap, then reproduced and fixed at 720×400 in both browser renderers. No real user agent received feedback during verification.
+
+Packaged/installed **v0.6.0**, 47 package files (1.33 MB). All **39** app/resource files match source, extracted VSIX and installation exactly; all 207 dependency records are unchanged. Package/install logs: `/private/tmp/agent-graph-badges-{package,install}-060.log`. The user's actual 1.142 workspace is still on snapshot **22:36**, 17 files / 62 components, File × Changed lines, selected rebuild and **81%**. Its native Add Comment prompt for `scripts/build-graph.cjs:4–21` is open, so activation by window reload is deliberately left pending to preserve that input. Finish the comment, then use Developer: Reload Window to load v0.6.0. No theme, sidebar, comparison or in-progress prompt was changed.
+
+Limits: native checks are on macOS; Windows and remote development remain unvalidated. Graph badge counts include resolved comments, and agent replies have their own count; they are not unread indicators. Feedback is displayed from the existing immutable review, without migrating comments to newer line numbers.
+
 ## Native graph feedback — v0.5.2
 
 - [x] Offer **Add Comment** beside symbol, usage and file diff actions, using the shared VS Code button styling and a wrapping action row.

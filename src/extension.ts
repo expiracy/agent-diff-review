@@ -141,7 +141,7 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
         target: { kind: 'worktree', value: this.repository.root, label: 'Working tree' }, mode: 'exact'
       };
     }
-    const update = () => { this.syncThreads(); this.changed.fire(undefined); this.decorationsChanged.fire(undefined); this.comments.update(store.state); this.updateStatus(); };
+    const update = () => { this.syncThreads(); this.changed.fire(undefined); this.decorationsChanged.fire(undefined); this.comments.update(store.state); this.graph.updateComments(store.state.notes); this.updateStatus(); };
     store.events.on('change', update);
     this.context.subscriptions.push({ dispose: () => { store.events.off('change', update); } });
     update();

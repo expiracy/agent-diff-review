@@ -9,7 +9,9 @@
   let axesLayout, layoutRevision = 0;
   let connectionsMode = saved.connectionsMode === 'selected' ? 'selected' : 'all', connectionSummary = '';
   let graph, snapshotInfo, capturedAt, reviewId = saved.reviewId, symbols = new Map(), files = new Map(), cards = [], cardMap = new Map(), groups = [], rootIds = new Map(), membersByRoot = new Map();
+  let feedback = {}, notesById = new Map();
   const memberPages = new Map(Object.entries(saved.memberPages || {}));
+  const commentPages = new Map();
   let selected = saved.selected || null, expanded = new Set(saved.expanded || []), revealed = new Set(), scope = saved.scope || '', query = saved.query || '';
   let camera = saved.camera || { x: 24, y: 24, zoom: 1 }, frame = 0, searchTimer, dragging, pendingFocus, initialized = false, analysisState = 'loading';
   let restoreRetryFocus = false;
@@ -34,6 +36,91 @@
     const node = element('span', `codicon codicon-${name} ${className}`); node.setAttribute('aria-hidden', 'true'); return node;
   }
   function symbolIcon(kind) { return icon(symbolIcons[kind] || 'symbol-misc', `symbol-icon ${kind}`); }
+  function commentsFor(kind, id) {
+    const ids = (kind === 'file' ? feedback.files : feedback.symbols)?.[id];
+    return Array.isArray(ids) ? ids.map(id => notesById.get(id)).filter(Boolean) : [];
+  }
+  function commentAnchor(anchor, kind, id, label) {
+    anchor.classList.add('comment-anchor'); Object.assign(anchor.dataset, { commentKind: kind, commentId: id, commentLabel: label });
+    renderCommentBadge(anchor);
+  }
+  function renderCommentBadge(anchor) {
+    const { commentKind: kind, commentId: id, commentLabel: label } = anchor.dataset;
+    const notes = commentsFor(kind, id); let badge = anchor.querySelector(':scope > .comment-badge');
+    if (!notes.length) {
+      if (badge && document.activeElement === badge && document.hasFocus()) anchor.querySelector('.node-head, .member')?.focus({ preventScroll: true });
+      badge?.remove(); return;
+    }
+    const replies = notes.reduce((total, note) => total + note.replies.length, 0);
+    if (!badge) { badge = button('', () => showGraphComments(kind, id), 'relation-action comment-badge'); anchor.append(badge); }
+    badge.replaceChildren(icon('comment-discussion'), element('span', '', String(notes.length)));
+    if (replies) badge.append(icon('reply'), element('span', '', String(replies)));
+    const summary = `${notes.length} comment${notes.length === 1 ? '' : 's'}${replies ? ` and ${replies} agent repl${replies === 1 ? 'y' : 'ies'}` : ''}`;
+    badge.title = `${summary} · ${notes.filter(note => !note.resolved).length} open`;
+    badge.setAttribute('aria-label', `Show ${summary} for ${label}`);
+  }
+  function setFeedback(value, refresh = true) {
+    feedback = value || {}; notesById = new Map((feedback.notes || []).map(note => [note.id, note]));
+    cardLayer.querySelectorAll('.comment-anchor').forEach(renderCommentBadge);
+    if (refresh) renderComments();
+  }
+  function showGraphComments(kind, id) {
+    closedSections.delete('Comments');
+    if (kind === 'file') { selected = { kind: 'file', id }; renderContext(); schedule(); persist(); }
+    else selectSymbol(id, false);
+    const section = byId('graph-comments');
+    if (section) {
+      section.open = true;
+      const summary = section.querySelector('summary'); summary.focus({ preventScroll: true });
+      context.scrollTop += summary.getBoundingClientRect().top - context.getBoundingClientRect().top - (context.querySelector('.context-label')?.offsetHeight || 0);
+    }
+  }
+  function commentTime(value) {
+    const time = element('time', 'comment-time', new Date(value).toLocaleString()); time.dateTime = value; return time;
+  }
+  function renderComments() {
+    let section = byId('graph-comments');
+    const active = document.hasFocus() && section?.contains(document.activeElement) ? document.activeElement : null;
+    const activeNote = active?.closest('.graph-comment')?.dataset.commentId;
+    const activeMore = active?.classList.contains('show-more-comments');
+    const panelBounds = context.getBoundingClientRect(), visibleTop = panelBounds.top + (context.querySelector('.context-label')?.offsetHeight || 0);
+    const reading = active?.closest('.graph-comment') ?? [...(section?.querySelectorAll('.graph-comment') || [])].find(entry => { const bounds = entry.getBoundingClientRect(); return bounds.bottom > visibleTop && bounds.top < panelBounds.bottom; });
+    const readingAnchor = reading ? { id: reading.dataset.commentId, top: reading.getBoundingClientRect().top } : null;
+    const notes = selected && ['symbol', 'file'].includes(selected.kind) ? commentsFor(selected.kind, selected.id) : [];
+    if (!notes.length) { section?.remove(); return; }
+    const scrollTop = context.scrollTop;
+    if (!section) {
+      const body = contextSection('Comments', notes.length); section = body.parentElement; section.id = 'graph-comments';
+      const firstSection = context.querySelector('.context-section'); if (firstSection !== section) context.insertBefore(section, firstSection);
+    }
+    section.querySelector('.count-badge').textContent = String(notes.length);
+    const body = section.querySelector('.section-body'); body.replaceChildren();
+    const key = `${selected.kind}:${selected.id}`, limit = commentPages.get(key) || 20;
+    for (const note of notes.slice(0, limit)) {
+      const entry = element('article', 'graph-comment'); entry.dataset.commentId = note.id; entry.tabIndex = -1;
+      const header = element('div', 'graph-comment-header');
+      const state = feedback.statuses?.[note.id];
+      header.append(element('strong', '', 'You'), element('span', `comment-status ${state?.id || ''}`, state?.id === 'draft' ? 'Draft' : state?.label || 'Comment'));
+      const location = `${note.filePath}:${note.startLine}${note.endLine === note.startLine ? '' : `–${note.endLine}`} · ${note.side === 'before' ? 'Before' : 'After'} snapshot`;
+      entry.append(header, element('div', 'comment-location', location), commentTime(note.createdAt), element('p', 'comment-body', note.body));
+      for (const reply of note.replies) {
+        const response = element('div', 'agent-reply');
+        const heading = element('div', 'graph-comment-header'); heading.append(element('strong', '', 'Agent'), commentTime(reply.createdAt));
+        response.append(heading, element('p', 'comment-body', reply.body)); entry.append(response);
+      }
+      body.append(entry);
+    }
+    if (notes.length > limit) body.append(button(`Show more comments (${notes.length - limit} remaining)`, () => {
+      commentPages.set(key, limit + 20); renderComments(); const next = byId('graph-comments')?.querySelectorAll('.graph-comment')[limit]; next?.focus();
+    }, 'link show-more-comments'));
+    if (activeNote) ([...body.querySelectorAll('.graph-comment')].find(entry => entry.dataset.commentId === activeNote) ?? section.querySelector('summary')).focus({ preventScroll: true });
+    else if (activeMore) (body.querySelector('.show-more-comments') ?? section.querySelector('summary')).focus({ preventScroll: true });
+    context.scrollTop = scrollTop;
+    if (readingAnchor) {
+      const restored = [...body.querySelectorAll('.graph-comment')].find(entry => entry.dataset.commentId === readingAnchor.id);
+      if (restored) context.scrollTop += restored.getBoundingClientRect().top - readingAnchor.top;
+    }
+  }
   function symbolContext(node, symbol) {
     node.dataset.vscodeContext = JSON.stringify({ webviewSection: 'graphSymbol', graphReviewId: reviewId, graphSymbolId: symbol.id, preventDefaultContextMenuItems: true });
   }
@@ -248,9 +335,11 @@
     const filePath = item?.filePath ?? card.file.path, path = element('span', 'path', filePath); path.title = filePath;
     main.append(title, counts(item?.changes ?? card.file?.changes));
     const meta = element('span', 'node-meta'); meta.append(path, element('span', 'kind', item ? `${item.kind}${item.status === 'unchanged' ? ' · unchanged' : ''}` : 'File'));
-    head.append(main, meta); node.append(head);
+    head.append(main, meta);
+    const header = element('div', 'node-header'); header.append(head); node.append(header);
+    commentAnchor(header, item ? 'symbol' : 'file', item?.id ?? card.file.path, item?.qualifiedName ?? card.file.path);
     if (card.file) node.append(button('Show entities in this file →', () => { scope = card.file.path; revealed.clear(); rebuild(true); pendingFocus = cards.find(card => card.symbol)?.id; }, 'node-foot'));
-    else if (!card.members.length && !['class', 'interface'].includes(item.kind)) node.append(memberRow(item));
+    else if (!card.members.length && !['class', 'interface'].includes(item.kind)) node.append(memberRow(item, false));
     else for (const fieldGroup of [true, false]) {
       const members = card.members.filter(member => (member.kind === 'field') === fieldGroup); if (!members.length) continue;
       const compartment = element('div', 'compartment'); compartment.append(element('span', 'section-label', fieldGroup ? 'Fields' : 'Methods / functions')); members.forEach(member => compartment.append(memberRow(member))); node.append(compartment);
@@ -274,12 +363,15 @@
     }
     return node;
   }
-  function memberRow(symbol) {
+  function memberRow(symbol, showComments = true) {
     const row = button('', () => selectSymbol(symbol.id, false), 'member'); row.dataset.symbol = symbol.id;
     symbolContext(row, symbol);
     row.setAttribute('aria-pressed', String(selected?.kind === 'symbol' && selected.id === symbol.id)); row.title = `${symbol.qualifiedName}\n${symbol.signature}\nDouble-click or press Enter to open diff`;
     row.setAttribute('aria-keyshortcuts', 'Enter');
-    row.append(symbolIcon(symbol.kind), element('code', '', symbol.signature), counts(symbol.changes), element('span', `badge ${symbol.status}`, symbol.status === 'unchanged' ? '' : labels[symbol.status])); return row;
+    row.append(symbolIcon(symbol.kind), element('code', '', symbol.signature), counts(symbol.changes), element('span', `badge ${symbol.status}`, symbol.status === 'unchanged' ? '' : labels[symbol.status]));
+    const container = element('div', 'member-row'); container.append(row); symbolContext(container, symbol);
+    if (showComments) commentAnchor(container, 'symbol', symbol.id, symbol.qualifiedName);
+    return container;
   }
   function drawEdges(visible) {
     svg.replaceChildren(); cardLayer.querySelectorAll('.edge-label').forEach(node => node.remove());
@@ -428,7 +520,7 @@
       const file = files.get(selected.id); if (!file) return;
       contextHeading('File', file.path.split('/').pop()); metadata('Location', element('span', 'signature', file.path)); metadata('Line changes', counts(file.changes, true));
       if (file.notice) context.append(element('p', 'detail', file.notice));
-      context.append(diffActions('Open file diff', 'file', { filePath: file.path }, file.commentable !== false)); return;
+      context.append(diffActions('Open file diff', 'file', { filePath: file.path }, file.commentable !== false)); renderComments(); return;
     }
     if (selected.kind === 'edge') {
       const edge = graph.edges.find(edge => edge.id === selected.id); if (!edge) return;
@@ -458,6 +550,7 @@
     context.append(element('span', 'snapshot-side', `${symbol.after ? 'After' : 'Before'} snapshot`), element('p', 'detail', symbol.detail));
     metadata('Line changes', counts(symbol.changes, true));
     context.append(diffActions('Open diff', 'symbol', { id: symbol.id }));
+    renderComments();
     const children = new Set([symbol.id, ...graph.symbols.filter(item => rootFor(item) === symbol.id).map(item => item.id)]);
     relationships('Uses', graph.edges.filter(edge => children.has(edge.source)), 'target');
     relationships('Used by', graph.edges.filter(edge => children.has(edge.target) && !children.has(edge.source)), 'source');
@@ -514,10 +607,13 @@
     if (restoreFocus) byId('other-toggle').focus();
   }
   window.addEventListener('message', event => {
-    const message = event.data; if (message?.type !== 'graph') return;
+    const message = event.data;
+    if (message?.type === 'comments') { if (message.reviewId === reviewId) setFeedback(message.feedback); return; }
+    if (message?.type !== 'graph') return;
     snapshotInfo = message.snapshot; capturedAt = message.createdAt;
     if (typeof message.reviewId === 'string') reviewId = message.reviewId;
     else if (message.graph) reviewId = message.graph.reviewId;
+    setFeedback(message.feedback, false);
     byId('comparison').textContent = message.comparison || '';
     byId('snapshot').textContent = message.createdAt ? `Snapshot ${new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
     byId('snapshot').title = message.createdAt ? new Date(message.createdAt).toLocaleString() : '';

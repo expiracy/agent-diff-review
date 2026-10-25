@@ -4,13 +4,21 @@ import type { Comparison } from './git.ts';
 import type { ChangeGraph } from './change-graph.ts';
 import { randomBytes } from 'node:crypto';
 import { endpointLabel } from './comparison-selection.ts';
+import type { Note } from './review.ts';
+import { graphComments } from './graph-comments.ts';
 
 export interface GraphLocation { reviewId: string; filePath: string; side: 'before' | 'after'; startLine: number; endLine: number }
 interface GraphPage { panel: vscode.WebviewPanel; review: Comparison; promise: Promise<ChangeGraph>; graph?: ChangeGraph; error?: string }
 
 export class GraphView implements vscode.Disposable {
   private readonly pages = new Map<string, GraphPage>();
+  private notes: readonly Note[] = [];
   constructor(private readonly extensionUri: vscode.Uri, private readonly openLocation: (location: GraphLocation, comment?: boolean) => Promise<void>, private readonly service: Pick<GraphService, 'build' | 'dispose'> = new GraphService()) {}
+
+  updateComments(notes: readonly Note[]): void {
+    this.notes = notes;
+    for (const page of this.pages.values()) if (page.graph) void page.panel.webview.postMessage({ type: 'comments', reviewId: page.review.id, feedback: graphComments(page.graph, notes) });
+  }
 
   async retry(reviewId: string): Promise<ChangeGraph | undefined> {
     const page = this.pages.get(reviewId);
@@ -62,7 +70,7 @@ export class GraphView implements vscode.Disposable {
   private publish(page: GraphPage): void {
     if (this.pages.get(page.review.id) !== page) return;
     void page.panel.webview.postMessage({ type: 'graph', reviewId: page.review.id, graph: page.graph, error: page.error, comparison: `${endpointLabel(page.review.base)} → ${endpointLabel(page.review.target)}`, createdAt: page.review.createdAt,
-      snapshot: { base: page.review.base, target: page.review.target, mode: page.review.mode } });
+      snapshot: { base: page.review.base, target: page.review.target, mode: page.review.mode }, feedback: page.graph ? graphComments(page.graph, this.notes) : undefined });
   }
 
   async openSymbol(reviewId: string, id: string, comment = false): Promise<void> {
