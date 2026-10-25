@@ -102,6 +102,15 @@ test('keeps unsupported, omitted and edits outside symbols accessible as other c
   assert.match(graph.files[2].notice!, /512 KiB/);
 });
 
+test('offers graph comments only for available text snapshots, including unsupported languages', async () => {
+  const graph = await buildChangeGraph({ id: 'commentable', files: [
+    file('settings.json', '{}\n', '{"enabled":true}\n'),
+    { ...file('image.bin', '', ''), binary: true },
+    { ...file('large.ts', '', ''), omitted: 'Text preview exceeds 512 KiB.' }
+  ] });
+  assert.deepEqual(graph.files.map(file => [file.path, file.commentable]), [['settings.json', true], ['image.bin', false], ['large.ts', false]]);
+});
+
 test('does not attribute a neighbouring edit to an unchanged member on the same line', async () => {
   const before = 'class Counter { value = 1; read() { return this.value; } }\n';
   const graph = await buildChangeGraph({ id: 'same-line', files: [file('counter.ts', before, before.replace('= 1', '= 2'))] });

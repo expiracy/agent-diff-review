@@ -58,7 +58,7 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     this.status.name = 'Agent Diff Review';
     this.tree = vscode.window.createTreeView('agentDiffReview', { treeDataProvider: this, showCollapseAll: true });
     this.comparison = new ComparisonView(context.extensionUri, message => this.handleComparisonAction(message));
-    this.graph = new GraphView(context.extensionUri, location => this.openSnapshotLocation(location));
+    this.graph = new GraphView(context.extensionUri, (location, comment) => comment ? this.commentOnGraphLocation(location) : this.openSnapshotLocation(location));
     context.subscriptions.push(this.changed, this.decorationsChanged, this.controller, this.output, this.status, this.tree, this.comments, this.comparison, this.graph,
       vscode.window.registerWebviewViewProvider('agentDiffReview.comparison', this.comparison),
       vscode.window.registerWebviewPanelSerializer('agentDiffReview.graph', { deserializeWebviewPanel: (panel, state) => this.restoreGraph(panel, state) }),
@@ -98,6 +98,7 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     register('deleteComment', (comment: ReviewComment) => this.store!.deleteNote(comment.noteId!));
     register('resolveThread', (thread: vscode.CommentThread) => this.resolveThread(thread));
     register('addComment', () => this.commentAtSelection());
+    register('commentGraphSymbol', argument => this.commentGraphSymbol(argument));
     register('openComment', argument => this.openComment(this.noteFromArgument(argument).id));
     register('showComments', () => vscode.commands.executeCommand('agentDiffReview.comments.focus'));
     register('findComment', () => this.findComment());
@@ -370,6 +371,23 @@ export class ReviewExtension implements vscode.TreeDataProvider<TreeEntry>, vsco
     const note = await this.store!.addNote(entry.review.id, entry.file.path, entry.side, start.line + 1, end.line + 1, reply.text);
     if (this.threads.get(this.threadKey(note)) !== reply.thread) reply.thread.dispose();
     return note;
+  }
+
+  async commentGraphSymbol(argument: unknown, prompt: (options: vscode.InputBoxOptions) => Thenable<string | undefined> = options => vscode.window.showInputBox(options)): Promise<Note | undefined> {
+    const target = argument as { graphReviewId?: unknown; graphSymbolId?: unknown } | undefined;
+    if (typeof target?.graphReviewId !== 'string' || typeof target.graphSymbolId !== 'string') throw new Error('Right-click a graph component or member to add a comment.');
+    const location = this.graph.symbolLocation(target.graphReviewId, target.graphSymbolId);
+    const { reviewId, filePath, side, startLine, endLine } = location;
+    const text = await prompt({ title: 'Add Comment', prompt: `Feedback for the agent · ${filePath}:${startLine}${endLine === startLine ? '' : `–${endLine}`} · ${side === 'before' ? 'Before' : 'After'} snapshot`, placeHolder: this.controller.options?.placeHolder, ignoreFocusOut: true });
+    if (!text?.trim()) return;
+    return this.store!.addNote(reviewId, filePath, side, startLine, endLine, text);
+  }
+
+  private async commentOnGraphLocation(location: GraphLocation): Promise<void> {
+    const file = this.store!.review(location.reviewId).files.find(file => file.path === location.filePath);
+    if (!file || file.omitted || file.binary) throw new Error('This file has no commentable text snapshot.');
+    await this.openSnapshotLocation(location);
+    await vscode.commands.executeCommand('workbench.action.addComment');
   }
 
   private async commentAtSelection(): Promise<void> {

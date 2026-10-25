@@ -10,7 +10,7 @@ interface GraphPage { panel: vscode.WebviewPanel; review: Comparison; promise: P
 
 export class GraphView implements vscode.Disposable {
   private readonly pages = new Map<string, GraphPage>();
-  constructor(private readonly extensionUri: vscode.Uri, private readonly openLocation: (location: GraphLocation) => Promise<void>, private readonly service: Pick<GraphService, 'build' | 'dispose'> = new GraphService()) {}
+  constructor(private readonly extensionUri: vscode.Uri, private readonly openLocation: (location: GraphLocation, comment?: boolean) => Promise<void>, private readonly service: Pick<GraphService, 'build' | 'dispose'> = new GraphService()) {}
 
   async retry(reviewId: string): Promise<ChangeGraph | undefined> {
     const page = this.pages.get(reviewId);
@@ -44,9 +44,9 @@ export class GraphView implements vscode.Disposable {
       const action = message as { action?: unknown; id?: unknown; filePath?: unknown };
       if (action.action === 'ready') { this.publish(page); return; }
       if (action.action === 'retry') { void this.retry(review.id); return; }
-      const operation = action.action === 'open-symbol' && typeof action.id === 'string' ? this.openSymbol(review.id, action.id)
-        : action.action === 'open-usage' && typeof action.id === 'string' ? this.openUsage(review.id, action.id)
-        : action.action === 'open-file' && typeof action.filePath === 'string' ? this.openFile(review.id, action.filePath) : undefined;
+      const operation = (action.action === 'open-symbol' || action.action === 'comment-symbol') && typeof action.id === 'string' ? this.openSymbol(review.id, action.id, action.action === 'comment-symbol')
+        : (action.action === 'open-usage' || action.action === 'comment-usage') && typeof action.id === 'string' ? this.openUsage(review.id, action.id, action.action === 'comment-usage')
+        : (action.action === 'open-file' || action.action === 'comment-file') && typeof action.filePath === 'string' ? this.openFile(review.id, action.filePath, action.action === 'comment-file') : undefined;
       void operation?.catch(error => vscode.window.showErrorMessage(`Agent Diff Review: ${error instanceof Error ? error.message : String(error)}`));
     });
     panel.onDidDispose(() => { messages.dispose(); if (this.pages.get(review.id) === page) this.pages.delete(review.id); });
@@ -65,24 +65,28 @@ export class GraphView implements vscode.Disposable {
       snapshot: { base: page.review.base, target: page.review.target, mode: page.review.mode } });
   }
 
-  async openSymbol(reviewId: string, id: string): Promise<void> {
+  async openSymbol(reviewId: string, id: string, comment = false): Promise<void> {
+    await this.openLocation(this.symbolLocation(reviewId, id), comment);
+  }
+
+  symbolLocation(reviewId: string, id: string): GraphLocation {
     const symbol = this.pages.get(reviewId)?.graph?.symbols.find(symbol => symbol.id === id);
     if (!symbol) throw new Error('This graph symbol is unavailable. Reopen the graph.');
     const range = symbol.after ?? symbol.before!;
-    await this.openLocation({ reviewId, filePath: symbol.filePath, side: symbol.after ? 'after' : 'before', ...range });
+    return { reviewId, filePath: symbol.filePath, side: symbol.after ? 'after' : 'before', ...range };
   }
 
-  async openUsage(reviewId: string, id: string): Promise<void> {
+  async openUsage(reviewId: string, id: string, comment = false): Promise<void> {
     const edge = this.pages.get(reviewId)?.graph?.edges.find(edge => edge.id === id);
     const usage = edge?.after ?? edge?.before;
     if (!usage) throw new Error('This graph usage is unavailable. Reopen the graph.');
-    await this.openLocation({ reviewId, filePath: usage.filePath, side: edge!.after ? 'after' : 'before', startLine: usage.line, endLine: usage.line });
+    await this.openLocation({ reviewId, filePath: usage.filePath, side: edge!.after ? 'after' : 'before', startLine: usage.line, endLine: usage.line }, comment);
   }
 
-  private async openFile(reviewId: string, filePath: string): Promise<void> {
+  async openFile(reviewId: string, filePath: string, comment = false): Promise<void> {
     const file = this.pages.get(reviewId)?.graph?.files.find(file => file.path === filePath);
     if (!file) throw new Error('This file is not in the graph snapshot.');
-    await this.openLocation({ reviewId, filePath, side: file.status === 'deleted' ? 'before' : 'after', startLine: 1, endLine: 1 });
+    await this.openLocation({ reviewId, filePath, side: file.status === 'deleted' ? 'before' : 'after', startLine: 1, endLine: 1 }, comment);
   }
 
   private html(webview: vscode.Webview): string {

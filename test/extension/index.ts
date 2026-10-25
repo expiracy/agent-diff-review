@@ -170,6 +170,7 @@ export async function run(): Promise<void> {
   await api.store!.addReview(graphReview);
   const graph = await vscode.commands.executeCommand<import('../../src/change-graph.ts').ChangeGraph>('agentDiffReview.openGraph');
   assert.ok(graph?.symbols.some(symbol => symbol.name === 'Counter'), 'The editor graph analyses the captured comparison');
+  for (let attempt = 0; attempt < 50 && !vscode.window.tabGroups.all.flatMap(group => group.tabs).some(tab => tab.input instanceof vscode.TabInputWebview && tab.label.startsWith('Change graph')); attempt++) await new Promise(resolve => setTimeout(resolve, 100));
   assert.ok(vscode.window.tabGroups.all.flatMap(group => group.tabs).some(tab => tab.input instanceof vscode.TabInputWebview && tab.label.startsWith('Change graph')), 'The graph opens as a dedicated editor page');
   const removedSymbol = graph.symbols.find(symbol => symbol.name === 'removed')!;
   await api.graph.openSymbol(graphReview.id, removedSymbol.id);
@@ -331,6 +332,127 @@ export async function run(): Promise<void> {
     await reopening?.catch(() => undefined);
     failedPanelSubscription.dispose(); failedPanel.dispose(); reopenView.dispose();
   }
+
+  const graphCommentText = 'Keep this graph member until callers have migrated.';
+  const notesBeforeGraphComment = api.store!.state.notes.length;
+  if ((await vscode.commands.getCommands()).includes('workbench.action.focusWindow')) await vscode.commands.executeCommand('workbench.action.focusWindow');
+  await api.graph.openSymbol(graphReview.id, removedSymbol.id, true);
+  // Native widgets render asynchronously, especially in the minimum supported host.
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  assert.equal(api.store!.state.notes.length, notesBeforeGraphComment, 'Nothing is saved or sent before Add Comment');
+  await vscode.commands.executeCommand('type', { text: graphCommentText });
+  await new Promise(resolve => setTimeout(resolve, 300));
+  await vscode.commands.executeCommand('editor.action.submitComment');
+  for (let attempt = 0; attempt < 50 && api.store!.state.notes.length === notesBeforeGraphComment; attempt++) await new Promise(resolve => setTimeout(resolve, 100));
+  const graphNote = api.store!.state.notes.find(note => note.body === graphCommentText);
+  assert.ok(graphNote, 'The graph action opens a native inline composer that saves through Add Comment');
+  assert.equal(graphNote.reviewId, graphReview.id);
+  assert.equal(graphNote.side, 'before', 'Removed code is commented on its captured original side');
+  assert.equal(graphNote.startLine, 3);
+  assert.equal(graphNote.endLine, 3);
+  assert.equal(graphNote.batchId, undefined, 'Graph feedback joins the existing draft queue');
+  assert.ok(api.comments.getChildren().flatMap(group => api.comments.getChildren(group)).some(entry => entry.noteId === graphNote.id), 'Graph comments appear in the same Comments view');
+  assert.equal(api.currentReview!.id, review.id, 'Commenting on an older graph preserves the active comparison');
+
+  const usageCommentText = 'Explain the new helper dependency at this call site.';
+  await api.graph.openUsage(graphReview.id, usage.id, true);
+  // Native widgets render asynchronously, especially in the minimum supported host.
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  await vscode.commands.executeCommand('type', { text: usageCommentText });
+  await new Promise(resolve => setTimeout(resolve, 300));
+  await vscode.commands.executeCommand('editor.action.submitComment');
+  for (let attempt = 0; attempt < 50 && !api.store!.state.notes.some(note => note.body === usageCommentText); attempt++) await new Promise(resolve => setTimeout(resolve, 100));
+  const usageNote = api.store!.state.notes.find(note => note.body === usageCommentText);
+  assert.ok(usageNote, 'A graph connection opens a native comment composer at its call site');
+  assert.equal(usageNote.reviewId, graphReview.id);
+  assert.equal(usageNote.side, 'after');
+  assert.equal(usageNote.startLine, 2);
+  assert.equal(usageNote.endLine, 2);
+  assert.equal(api.currentReview!.id, review.id);
+
+  const fileCommentText = 'Please explain the changes in this captured file.';
+  await api.graph.openFile(graphReview.id, 'graph.ts', true);
+  // Native widgets render asynchronously, especially in the minimum supported host.
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  await vscode.commands.executeCommand('type', { text: fileCommentText });
+  await new Promise(resolve => setTimeout(resolve, 300));
+  await vscode.commands.executeCommand('editor.action.submitComment');
+  for (let attempt = 0; attempt < 50 && !api.store!.state.notes.some(note => note.body === fileCommentText); attempt++) await new Promise(resolve => setTimeout(resolve, 100));
+  const fileNote = api.store!.state.notes.find(note => note.body === fileCommentText);
+  assert.ok(fileNote, 'Graph file Details opens the same native comment composer');
+  assert.equal(fileNote.reviewId, graphReview.id);
+  assert.equal(fileNote.side, 'after');
+  assert.equal(fileNote.startLine, 1);
+  assert.equal(fileNote.endLine, 1);
+
+  await runScript('ack', '--connection', connection.connection, '--batch', followUpBatch!.id);
+  const waitingForGraphFeedback = runScript('wait', '--connection', connection.connection, '--timeout', '10');
+  const graphBatch = await api.send({ connectionId: connection.id, instruction: 'Address the graph review feedback.' }, graphReview.id);
+  const graphFeedback = await waitingForGraphFeedback;
+  assert.equal(graphFeedback.batchId, graphBatch!.id);
+  assert.equal(graphFeedback.review.id, graphReview.id, 'Graph comments are delivered with their captured comparison, not the current review');
+  assert.deepEqual(graphFeedback.comments.map((note: Note) => note.id), [graphNote.id, usageNote.id, fileNote.id]);
+  assert.deepEqual(graphFeedback.files, JSON.parse(JSON.stringify(graphReview.files)), 'The agent receives the exact captured files in the JSON feedback payload');
+  await runScript('ack', '--connection', connection.connection, '--batch', graphBatch!.id);
+  await runScript('reply', '--connection', connection.connection, '--comment', graphNote.id, '--message', 'The removed member is retained and its callers are covered.');
+  assert.ok([...api.threads.values()].some(thread => thread.uri.authority === graphReview.id && thread.comments.some(comment => comment.author.name === 'Agent')), 'Agent replies to graph comments appear in the same native threads');
+  const graphReply = api.comments.getChildren().flatMap(group => api.comments.getChildren(group)).find(entry => entry.noteId === graphNote.id)!;
+  assert.equal(api.comments.getChildren(graphReply)[0]?.label, 'The removed member is retained and its callers are covered.', 'Graph replies remain readable in the existing Comments view');
+  assert.equal(api.currentReview!.id, review.id);
+
+  const component = graph.symbols.find(symbol => symbol.name === 'Counter')!;
+  await api.graph.show(graphReview);
+  const diffTabsBeforeContext = vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputTextDiff).length;
+  const componentNote = await api.commentGraphSymbol({ graphReviewId: graphReview.id, graphSymbolId: component.id }, async () => 'Review the entire Counter component.');
+  assert.ok(componentNote, 'A component context comment is saved as a normal review draft');
+  assert.equal(componentNote.reviewId, graphReview.id);
+  assert.equal(componentNote.filePath, 'graph.ts');
+  assert.equal(componentNote.side, 'after');
+  assert.equal(componentNote.startLine, 1);
+  assert.equal(componentNote.endLine, 3, 'A component comment covers its complete captured range');
+  assert.equal(componentNote.batchId, undefined);
+  assert.equal(vscode.window.tabGroups.all.flatMap(group => group.tabs).filter(tab => tab.input instanceof vscode.TabInputTextDiff).length, diffTabsBeforeContext, 'Writing from the graph does not open another diff');
+  assert.equal(api.currentReview!.id, review.id);
+
+  const sharedMemberThread = [...api.threads.values()].find(thread => thread.uri.toString() === api.uri(graphReview.id, 'graph.ts', 'before').toString() && thread.range.start.line === 2)!;
+  const memberContextNote = await api.commentGraphSymbol({ graphReviewId: graphReview.id, graphSymbolId: removedSymbol.id }, async options => {
+    assert.match(options.prompt!, /graph\.ts:3 · Before snapshot/);
+    return 'Comment on only the removed subfunction from the graph.';
+  });
+  assert.ok(memberContextNote);
+  assert.equal(memberContextNote.side, 'before');
+  assert.equal(memberContextNote.startLine, 3);
+  assert.equal(memberContextNote.endLine, 3);
+  assert.ok([...api.threads.values()].includes(sharedMemberThread), 'Graph context comments reuse the existing normal-diff thread');
+  assert.ok(sharedMemberThread.comments.some(comment => comment.body === memberContextNote.body), 'The subfunction comment appears in the same native thread as inline diff feedback');
+  await api.openComment(memberContextNote.id);
+  assert.equal(vscode.window.activeTextEditor?.document.uri.toString(), api.uri(graphReview.id, 'graph.ts', 'before').toString());
+  assert.equal(vscode.window.activeTextEditor?.selection.start.line, 2, 'Opening the graph comment in the normal diff selects its exact member');
+
+  const notesBeforeCancelledContext = api.store!.state.notes.length;
+  assert.equal(await api.commentGraphSymbol({ graphReviewId: graphReview.id, graphSymbolId: component.id }, async () => undefined), undefined);
+  assert.equal(api.store!.state.notes.length, notesBeforeCancelledContext, 'Cancelling graph feedback creates no draft');
+  await assert.rejects(api.commentGraphSymbol({ graphReviewId: graphReview.id, graphSymbolId: 42 }, async () => { throw new Error('Invalid context must not open an input'); }), /Right-click a graph component/);
+  await assert.rejects(api.commentGraphSymbol({ graphReviewId: graphReview.id, graphSymbolId: 'unknown-component' }, async () => { throw new Error('Unknown symbols must not open an input'); }), /unavailable/);
+  assert.equal(api.store!.state.notes.length, notesBeforeCancelledContext);
+
+  const contextDelivery = runScript('wait', '--connection', connection.connection, '--timeout', '10');
+  const contextBatch = await api.send({ connectionId: connection.id, instruction: 'Address the component and subfunction feedback.' }, graphReview.id);
+  const contextFeedback = await contextDelivery;
+  assert.equal(contextFeedback.batchId, contextBatch!.id);
+  assert.deepEqual(contextFeedback.comments.map((note: Note) => [note.id, note.side, note.startLine, note.endLine]), [[componentNote.id, 'after', 1, 3], [memberContextNote.id, 'before', 3, 3]], 'Right-click graph drafts use the same agent delivery payload with exact component/member ranges');
+  assert.equal(contextFeedback.review.id, graphReview.id);
+  await runScript('ack', '--connection', connection.connection, '--batch', contextBatch!.id);
+
+  const unavailableTextReview: Comparison = { ...graphReview, id: randomUUID(), files: [{ ...example, path: 'image.bin', binary: true, omitted: 'Binary file.' }] };
+  await api.store!.addReview(unavailableTextReview);
+  await api.store!.selectReview(review.id);
+  await api.graph.show(unavailableTextReview);
+  const postedBeforeUnavailable = api.store!.state.notes.length;
+  await assert.rejects(api.graph.openFile(unavailableTextReview.id, 'image.bin', true), /no commentable text snapshot/, 'The host rejects unavailable text even if a stale graph requests a comment');
+  await assert.rejects(api.graph.openFile(graphReview.id, 'not-in-this-graph.ts', true), /not in the graph snapshot/);
+  assert.equal(api.store!.state.notes.length, postedBeforeUnavailable, 'Rejected comment requests create no drafts');
+  assert.equal(api.currentReview!.id, review.id, 'Unavailable graph comments leave the active comparison alone');
 
   await vscode.window.showTextDocument(vscode.Uri.file(path.join(repository, 'example.ts')), { preview: false });
   const outsideReview = vscode.window.activeTextEditor!.document.uri.toString();

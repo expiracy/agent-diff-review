@@ -33,6 +33,7 @@ export interface GraphEdge {
 export interface GraphFile {
   path: string;
   status: ChangeStatus;
+  commentable?: boolean;
   changes: LineChanges | null;
   otherChanges: LineChanges | null;
   notice?: string;
@@ -49,7 +50,7 @@ export async function buildChangeGraph(review: Pick<Comparison, 'id' | 'files'>)
   const sides: Record<'before' | 'after', SideSymbol[]> = { before: [], after: [] };
   const fileEdits = new Map<string, { before: number[]; after: number[] }>();
   for (const file of review.files) {
-    const summary: GraphFile = { path: file.path, status: file.status, changes: null, otherChanges: null };
+    const summary: GraphFile = { path: file.path, status: file.status, commentable: !file.omitted && !file.binary, changes: null, otherChanges: null };
     graph.files.push(summary);
     if (file.omitted || file.binary) { summary.notice = file.omitted ?? 'Binary file'; continue; }
     const before = file.before.replace(/\r\n/g, '\n'), after = file.after.replace(/\r\n/g, '\n');

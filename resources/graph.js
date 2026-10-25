@@ -34,11 +34,23 @@
     const node = element('span', `codicon codicon-${name} ${className}`); node.setAttribute('aria-hidden', 'true'); return node;
   }
   function symbolIcon(kind) { return icon(symbolIcons[kind] || 'symbol-misc', `symbol-icon ${kind}`); }
+  function symbolContext(node, symbol) {
+    node.dataset.vscodeContext = JSON.stringify({ webviewSection: 'graphSymbol', graphReviewId: reviewId, graphSymbolId: symbol.id, preventDefaultContextMenuItems: true });
+  }
   function symbolLink(symbol, action) {
     const link = button('', action, 'link symbol-link inline-symbol');
     link.append(symbolIcon(symbol.kind), element('span', '', symbol.qualifiedName)); link.title = `${symbol.qualifiedName}\n${symbol.filePath}`; return link;
   }
   function openButton(text, action) { const node = button(text, action, 'action-button secondary open-diff'); node.prepend(icon('go-to-file')); return node; }
+  function diffActions(text, kind, target, commentable = true) {
+    const actions = element('div', 'diff-actions');
+    actions.setAttribute('role', 'group'); actions.setAttribute('aria-label', 'Review actions');
+    const comment = button('Add Comment', () => vscode.postMessage({ action: `comment-${kind}`, ...target }), 'action-button secondary add-comment');
+    comment.prepend(icon('comment-add')); comment.title = 'Open the saved diff and comment on these lines';
+    actions.append(openButton(text, () => vscode.postMessage({ action: `open-${kind}`, ...target })));
+    if (commentable) actions.append(comment);
+    return actions;
+  }
   function counts(changes, full = false) {
     const node = element('span', 'line-counts');
     if (!changes) { node.textContent = '—'; node.title = 'Line counts unavailable'; return node; }
@@ -226,7 +238,7 @@
     const node = element('article', 'node'); node.style.left = `${card.x}px`; node.style.top = `${card.y}px`; node.dataset.card = card.id;
     const item = card.symbol, head = button('', () => card.file ? selectFile(card.file.path) : selectSymbol(item.id, false), 'node-head');
     node.dataset.selected = String(selected?.kind === 'symbol' && rootFor(symbols.get(selected.id)) === card.id || selected?.kind === 'file' && card.file?.path === selected.id);
-    if (item) { head.dataset.symbol = item.id; head.setAttribute('aria-pressed', String(selected?.kind === 'symbol' && selected.id === item.id)); }
+    if (item) { symbolContext(node, item); head.dataset.symbol = item.id; head.setAttribute('aria-pressed', String(selected?.kind === 'symbol' && selected.id === item.id)); }
     else head.dataset.file = card.file.path;
     head.title = `${item?.qualifiedName ?? card.file.path}\nDouble-click or press Enter to open diff`;
     head.setAttribute('aria-keyshortcuts', 'Enter');
@@ -264,6 +276,7 @@
   }
   function memberRow(symbol) {
     const row = button('', () => selectSymbol(symbol.id, false), 'member'); row.dataset.symbol = symbol.id;
+    symbolContext(row, symbol);
     row.setAttribute('aria-pressed', String(selected?.kind === 'symbol' && selected.id === symbol.id)); row.title = `${symbol.qualifiedName}\n${symbol.signature}\nDouble-click or press Enter to open diff`;
     row.setAttribute('aria-keyshortcuts', 'Enter');
     row.append(symbolIcon(symbol.kind), element('code', '', symbol.signature), counts(symbol.changes), element('span', `badge ${symbol.status}`, symbol.status === 'unchanged' ? '' : labels[symbol.status])); return row;
@@ -415,7 +428,7 @@
       const file = files.get(selected.id); if (!file) return;
       contextHeading('File', file.path.split('/').pop()); metadata('Location', element('span', 'signature', file.path)); metadata('Line changes', counts(file.changes, true));
       if (file.notice) context.append(element('p', 'detail', file.notice));
-      context.append(openButton('Open file diff', () => vscode.postMessage({ action: 'open-file', filePath: file.path }))); return;
+      context.append(diffActions('Open file diff', 'file', { filePath: file.path }, file.commentable !== false)); return;
     }
     if (selected.kind === 'edge') {
       const edge = graph.edges.find(edge => edge.id === selected.id); if (!edge) return;
@@ -430,7 +443,7 @@
         metadata('Source', symbolLink(symbols.get(item.source), () => selectSymbol(item.source)), container);
         metadata('Target', symbolLink(symbols.get(item.target), () => selectSymbol(item.target)), container);
         metadata('Location', element('span', 'signature', `${usage.filePath}:${usage.line} · ${item.after ? 'after' : 'before'}`), container);
-        container.append(openButton('Open usage in diff', () => vscode.postMessage({ action: 'open-usage', id: item.id })));
+        container.append(diffActions('Open usage in diff', 'usage', { id: item.id }));
       } if (shown < related.length) container.append(button(`Show more usages (${related.length - shown} remaining)`, event => { const start = shown; event.currentTarget.remove(); appendUsages(); container.querySelectorAll('.open-diff')[start]?.focus(); })); };
       appendUsages();
       return;
@@ -444,7 +457,7 @@
     metadata('Location', button(`${symbol.filePath}:${range.startLine}`, () => vscode.postMessage({ action: 'open-symbol', id: symbol.id }), 'link location'));
     context.append(element('span', 'snapshot-side', `${symbol.after ? 'After' : 'Before'} snapshot`), element('p', 'detail', symbol.detail));
     metadata('Line changes', counts(symbol.changes, true));
-    context.append(openButton('Open diff', () => vscode.postMessage({ action: 'open-symbol', id: symbol.id })));
+    context.append(diffActions('Open diff', 'symbol', { id: symbol.id }));
     const children = new Set([symbol.id, ...graph.symbols.filter(item => rootFor(item) === symbol.id).map(item => item.id)]);
     relationships('Uses', graph.edges.filter(edge => children.has(edge.source)), 'target');
     relationships('Used by', graph.edges.filter(edge => children.has(edge.target) && !children.has(edge.source)), 'source');

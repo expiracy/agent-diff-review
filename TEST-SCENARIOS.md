@@ -1,5 +1,37 @@
 # First-version scenarios
 
+## Native graph feedback — v0.5.2
+
+- [x] Offer **Add Comment** beside symbol, usage and file diff actions, using the shared VS Code button styling and a wrapping action row.
+- [x] Right-click a whole component or a specific member to write feedback in a native VS Code prompt while keeping the graph open; comments use the same normal-diff thread and agent delivery queue.
+- [x] Open the native inline comment composer on the captured symbol range, exact usage line, or first file line; removed code uses the original side.
+- [x] Keep graph selection/settings and the active comparison unchanged when commenting on an earlier graph snapshot.
+- [x] Save graph feedback in the existing draft queue; send captured code to the test agent and show its acknowledgement/reply in native threads and Comments.
+- [x] Keep unsupported text languages commentable while hiding and rejecting comments for binary/omitted previews. Reject paths outside the graph snapshot without creating drafts.
+- [x] Check keyboard access, untrusted paths, wrapping and unobscured actions at 220px, existing graph/Comparison workflows, axes and reload persistence.
+- [x] Package/install and finish the actual workspace walkthrough.
+
+Canon TDD evidence: symbol/usage/file browser entry-point tests and native composer tests each failed for the missing behavior before implementation. Commentability metadata and unavailable-preview action tests also failed before their fixes. Red/green logs are retained under `/private/tmp/agent-graph-comments-*`. Existing delivery/reply behavior was covered through the real test bridge without manufacturing a failure.
+
+Executed verification:
+
+- `npm test`: **70/70 pass**, Node 26.3.0 (`/private/tmp/agent-graph-comments-final-unit.log`). The initial sandboxed baseline could not listen on loopback; baseline and final full suites passed with local-network access.
+- Complete graph/Comparison and axes browser suites pass on Chromium **151.0.7922.34** and **124.0.6367.29** (`/private/tmp/agent-graph-comments-final-browser-{151,124}.log`). Inspected new action rows in light, dark, high contrast and a 220px editor. Screenshots: `/private/tmp/agent-graph-comments-webviews-{151,124}`; axes artifacts use the corresponding `agent-graph-comments-axes-*` folders.
+- Native integration passes on VS Code **1.142.0** and minimum **1.94.0** (`/private/tmp/agent-graph-comments-final-native-current.log`, `/private/tmp/agent-graph-comments-native-194.log`). Tests actually type into and submit native comment widgets for removed members, usages and files. They verify exact review/side/lines, draft visibility, real local feedback JSON, acknowledgement and agent replies. Binary/stale-path requests create no drafts. Existing navigation, comparison, comments, persistence restoration and graph lifecycle assertions remain green.
+- Native test setup allows one second for the renderer to construct each comment widget before typing, plus an input-context update before submission. Immediate programmatic typing was too early, especially on 1.94; a paused older-host diagnostic and actual native accessibility inspection confirmed the correctly focused composer. No production delay or assertion was removed. An existing graph-tab assertion now waits for its asynchronous tab event. The attempted read-only comment-controller interception and two feedback-fixture setup issues (an earlier unacknowledged batch and JSON omission of undefined properties) were corrected; they were not product defects. The minimum host's known auxiliary-process shutdown warning follows passing assertions; host/runner exit 0.
+
+Limits: native testing is on macOS; Windows and remote development remain unvalidated. Agents receive feedback only through the existing explicit Send Review workflow. All agent delivery in these checks uses an isolated test session.
+
+Right-click follow-up: component and member native context metadata were red before implementation; members override their containing card. The whole-component native integration case was red before saving the comment. The context command resolves IDs against the graph's captured data; it does not accept a line range from the webview or use the current editor's selection. Native tests with a controlled feedback prompt cover a complete class range, a removed subfunction, cancellation, invalid/unknown targets, keeping the graph open, reusing an existing native diff thread, opening that exact range in the normal diff, and delivering both ranges to the real test bridge. This controlled prompt verifies routing/persistence; the actual native context-menu/prompt walkthrough is recorded separately below.
+
+Final automated results for the right-click follow-up: 70 unit tests pass (`/private/tmp/agent-graph-context-final-unit.log`); complete Chromium 124/151 suites pass (`agent-graph-context-final-browser-{124,151}.log`), and VS Code 1.94/1.142 integration passes (`agent-graph-context-final-native-{194,current}.log`). Current-host input setup explicitly focuses the isolated native test window when the host provides that command; older hosts do not expose it and skip that setup step. Assertions about native comment submission were retained. Right-click TDD/characterization logs use `/private/tmp/agent-graph-context-*`.
+
+Packaged/installed **v0.5.2**, 46 package files. All **38** app/resource files are byte-identical between source, extracted VSIX and installation; all three manifests contain the native webview context action. All 207 dependency records are unchanged. Package/install logs: `/private/tmp/agent-graph-context-{package,install}-052.log`.
+
+Actual installed VS Code 1.142 walkthrough: right-click **GraphSymbol** and choose the native **Add Comment** menu item. The graph stays visible and the native prompt identifies `src/change-graph.ts:9–22 · After snapshot`, the full 14-line interface. Escape cancels without a draft. Right-click the visible nested **resolveUsages.lookup** function: its prompt identifies only `src/change-graph.ts:160–166`. Saved a uniquely labelled temporary verification comment; the graph stayed open, the shared Comments view showed its draft, and opening it displayed the normal native diff thread on exactly lines 160–166. Removed that draft with the native **Delete Draft** action, confirmed zero unresolved test comments, then closed the walkthrough diff/bottom Comments panel and restored the sidebar Comments section to collapsed. No feedback was sent to a real agent. An initial right-click attempt on an off-screen overscan member hit the background and showed the default Cut/Copy/Paste menu; the visible nested member check above targets the actual on-screen row.
+
+The user's latest graph view is retained: snapshot 22:36, 17 files / 62 components, File × Changed lines, selected `rebuild`, 81%, Quiet Light and the existing sidebar width. These latest selection/camera settings differed from earlier walkthroughs, so they were preserved rather than overwritten with older recorded preferences. Prior to the clarification, installed Details actions were also checked for native file-line and usage-line composers. The right-click workflow is the entry point for writing feedback while keeping the graph open.
+
 ## PR reviewer workflow — follow-up
 
 Checkpoint `4ddd966` was committed and pushed to origin/main before starting this pass. Baseline: 64 unit tests and full browser suites pass; working tree was clean.
