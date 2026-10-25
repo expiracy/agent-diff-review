@@ -106,3 +106,15 @@ npm run package
 `npm run test:webviews` runs the actual graph and Comparison HTML, styles and scripts in headless Chromium, with the VS Code messaging API replaced by a test adapter. It covers selection, double-click and keyboard diff requests, popup dismissal, search, snapshot restoration, 10,000-symbol rendering, theme typography, and narrow sidebar layouts. Native integration tests verify the extension side of those diff requests. Set `WEBVIEW_TEST_ARTIFACTS` to an absolute directory to retain screenshots, or `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use a specific Chromium installation. Both runners print their actual runtime versions; browser tests fix the display scale so wheel distances remain consistent on Retina displays.
 
 To develop interactively, run **Run Agent Diff Review** with F5, then open a Git repository in the Extension Development Host. Native editor integration follows Microsoft's [diff command](https://code.visualstudio.com/api/references/commands), [virtual document API](https://code.visualstudio.com/api/extension-guides/virtual-documents), and [comment sample](https://github.com/microsoft/vscode-extension-samples/tree/main/comment-sample).
+
+**License**
+
+Copyright (c) 2026.
+
+Agent Diff Review is licensed under the **GNU Affero General Public License, version 3 only** (`AGPL-3.0-only`). You may redistribute and modify the project's original code under those terms. The complete license, including its warranty disclaimer, is in [LICENSE](LICENSE).
+
+Distributing a covered modified or combined work requires complying with AGPLv3's copyleft and corresponding-source requirements. If you modify the program and let users interact with that version over a network, section 13 requires offering those users its corresponding source code. Using this extension to review a project does not change that project's license.
+
+Third-party dependencies and assets retain their own licenses and notices. Bundled grammar notices are in [resources/graph-parser-notices.txt](resources/graph-parser-notices.txt); packaged parser/runtime notices and Codicons licenses are included under `out/src/parsers/` and `out/codicons/` respectively.
+
+This license change applies to this revision. Copies of earlier revisions released under MIT retain their existing MIT permissions.
