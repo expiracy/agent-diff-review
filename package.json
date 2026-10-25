@@ -2,7 +2,7 @@
   "name": "agent-diff-review",
   "displayName": "Agent Diff Review",
   "description": "Review branch and worktree diffs, leave line comments, and send feedback to your existing coding agent session.",
-  "version": "0.6.0",
+  "version": "0.6.2",
   "publisher": "local-agent-tools",
   "license": "AGPL-3.0-only",
   "repository": {

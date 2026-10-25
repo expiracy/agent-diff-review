@@ -52,7 +52,8 @@ export class GraphView implements vscode.Disposable {
       const action = message as { action?: unknown; id?: unknown; filePath?: unknown };
       if (action.action === 'ready') { this.publish(page); return; }
       if (action.action === 'retry') { void this.retry(review.id); return; }
-      const operation = (action.action === 'open-symbol' || action.action === 'comment-symbol') && typeof action.id === 'string' ? this.openSymbol(review.id, action.id, action.action === 'comment-symbol')
+      const operation = (action.action === 'open-comment' || action.action === 'resolve-comment' || action.action === 'reopen-comment') && typeof action.id === 'string' ? this.commentAction(review.id, action.id, action.action)
+        : (action.action === 'open-symbol' || action.action === 'comment-symbol') && typeof action.id === 'string' ? this.openSymbol(review.id, action.id, action.action === 'comment-symbol')
         : (action.action === 'open-usage' || action.action === 'comment-usage') && typeof action.id === 'string' ? this.openUsage(review.id, action.id, action.action === 'comment-usage')
         : (action.action === 'open-file' || action.action === 'comment-file') && typeof action.filePath === 'string' ? this.openFile(review.id, action.filePath, action.action === 'comment-file') : undefined;
       void operation?.catch(error => vscode.window.showErrorMessage(`Agent Diff Review: ${error instanceof Error ? error.message : String(error)}`));
@@ -75,6 +76,14 @@ export class GraphView implements vscode.Disposable {
 
   async openSymbol(reviewId: string, id: string, comment = false): Promise<void> {
     await this.openLocation(this.symbolLocation(reviewId, id), comment);
+  }
+
+  async commentAction(reviewId: string, id: string, action: 'open-comment' | 'resolve-comment' | 'reopen-comment'): Promise<void> {
+    const graph = this.pages.get(reviewId)?.graph;
+    const note = this.notes.find(note => note.id === id && note.reviewId === reviewId && graph?.files.some(file => file.path === note.filePath));
+    if (!note) throw new Error('This comment is unavailable in this graph snapshot.');
+    const commands = { 'open-comment': 'agentDiffReview.openComment', 'resolve-comment': 'agentDiffReview.resolveComment', 'reopen-comment': 'agentDiffReview.reopenComment' };
+    await vscode.commands.executeCommand(commands[action], note.id);
   }
 
   symbolLocation(reviewId: string, id: string): GraphLocation {

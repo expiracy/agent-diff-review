@@ -92,6 +92,8 @@ select { min-width: 0; height: 26px; padding: 2px 5px; border: 1px solid var(--v
 .relation-action.comment-badge { display: inline-flex; align-items: center; justify-content: center; gap: 3px; flex: none; width: auto; min-width: 24px; height: 20px; margin-right: 8px; padding: 1px 4px; font-size: 10px; line-height: 16px; color: var(--vscode-badge-foreground); background: var(--vscode-badge-background); opacity: 1; }
 .node-header > .comment-badge { align-self: flex-start; margin-top: 10px; }
 .comment-badge > .codicon { font-size: 12px; }
+.relation-action.comment-badge[data-status=resolved] { color: var(--graph-muted); background: transparent; box-shadow: inset 0 0 0 1px var(--vscode-contrastBorder, var(--graph-border)); }
+.relation-action.comment-badge:hover, .relation-action.comment-badge:focus-visible { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
 .node-main { display: flex; align-items: center; gap: 7px; min-height: 20px; }
 .node-title { min-width: 0; flex: 1; font-family: var(--graph-ui-font); font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .symbol-icon { font-size: 16px; }
@@ -190,6 +192,7 @@ select { min-width: 0; height: 26px; padding: 2px 5px; border: 1px solid var(--v
 .graph-comment:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -2px; }
 .graph-comment-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11px; }
 .graph-comment-header strong { font-weight: 600; }
+.graph-comment-actions { display: inline-flex; align-items: center; gap: 2px; }
 .comment-status { margin-left: auto; color: var(--graph-muted); }
 .comment-status.review { color: var(--vscode-foreground); }
 .comment-status.needsChanges { color: var(--vscode-list-warningForeground); }
@@ -220,6 +223,15 @@ footer[data-recovery=true] .navigation-hint { display: none; }
 body.vscode-high-contrast .node, body.vscode-high-contrast-light .node { border-color: var(--vscode-contrastBorder); box-shadow: none; }
 body.vscode-high-contrast .graph-edge, body.vscode-high-contrast-light .graph-edge { color: var(--vscode-foreground); }
 body.vscode-high-contrast .graph-edge.active, body.vscode-high-contrast-light .graph-edge.active { color: var(--vscode-focusBorder); stroke-width: 2; }
+#cards .node[data-trace=source] { border-color: var(--vscode-focusBorder); outline: 2px solid var(--vscode-focusBorder); outline-offset: 0; }
+#cards .node[data-trace=linked] { border-color: var(--vscode-focusBorder); outline: 1px solid var(--vscode-focusBorder); outline-offset: 0; }
+#cards .node[data-trace=unrelated] { opacity: .42; }
+#cards .member[data-trace=source] { background: var(--vscode-list-inactiveSelectionBackground); outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+#cards .member[data-trace=linked] { background: var(--vscode-list-hoverBackground); box-shadow: inset 2px 0 var(--vscode-focusBorder); }
+#world .graph-edge[data-trace=linked] { color: var(--vscode-focusBorder); stroke-width: 2.5; opacity: 1; }
+#world .graph-edge[data-trace=unrelated] { opacity: .15; }
+#cards .edge-label[data-trace=linked] { opacity: 1; color: var(--vscode-focusBorder); border-color: var(--vscode-focusBorder); }
+#cards .edge-label[data-trace=unrelated] { opacity: 0; pointer-events: none; }
 @media (max-width: 960px) { #snapshot { display: none; } .navigation-hint { display: none; } .toolbar { gap: 6px; } .search-box { width: 190px; } }
 @media (max-width: 680px) { .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(76px, 36%); } #context { border-left: 0; border-top: 1px solid var(--graph-border); } .toolbar-divider { display: none; } .search-box { flex: 1; } }
 @media (max-width: 680px) {

@@ -35,6 +35,72 @@ const settle = page => page.evaluate(() => new Promise(resolve => requestAnimati
     await page.goto('file://' + directory + '/index.html');
     await page.waitForSelector('.node');
 
+    const hoverId = name => graph.symbols.find(symbol => symbol.name === name).id;
+    await page.locator(`.node-head[data-symbol="${hoverId('Service')}"]`).click();
+    await settle(page);
+    const beforeHover = await page.evaluate(() => ({ state: window.__state, context: document.getElementById('context').innerText }));
+    await page.evaluate(() => { window.__hoverCard = document.querySelector('.node'); window.__hoverEdge = document.querySelector('.graph-edge'); });
+    await page.locator(`.node-head[data-symbol="${hoverId('target')}"]`).hover();
+    await settle(page);
+    assert.equal(await page.locator('.graph-edge[data-trace="linked"]').count(), 3, 'Hover traces direct incoming and outgoing arrows');
+    assert.deepEqual(await page.locator('.node[data-trace="linked"]').evaluateAll(nodes => nodes.map(node => node.dataset.card).sort()), ['Service', 'spare', 'local'].map(hoverId).sort(), 'Only direct neighbours are emphasised');
+    assert.equal(await page.locator(`.node[data-card="${hoverId('target')}"]`).getAttribute('data-trace'), 'source');
+    assert.ok(Number(await page.locator(`.node[data-card="${hoverId('helper')}"]`).evaluate(node => getComputedStyle(node).opacity)) < 1, 'Unrelated components recede');
+    const highlightedArrow = await page.locator('.graph-edge[data-trace="linked"]').first().evaluate(node => ({ width: parseFloat(getComputedStyle(node).strokeWidth), marker: node.getAttribute('marker-end') }));
+    assert.ok(highlightedArrow.width > 1.5, 'Hovered arrows stand out more clearly than selected arrows');
+    assert.equal(highlightedArrow.marker, 'url(#graph-arrow-active)', 'The arrowhead uses the highlighted arrow colour');
+    assert.equal(await page.locator('.edge-label[data-trace="linked"]').count(), 3, 'Relationship labels follow the hovered component');
+    assert.deepEqual(await page.evaluate(() => ({ state: window.__state, context: document.getElementById('context').innerText })), beforeHover, 'Hover does not change the saved selection, camera or Details');
+    assert.equal(await page.evaluate(() => window.__hoverCard.isConnected && window.__hoverEdge.isConnected), true, 'Hover reuses mounted cards and paths');
+    await page.locator('h1').hover(); await settle(page);
+    assert.equal(await page.locator('.node[data-trace="source"], .node[data-trace="linked"], .graph-edge[data-trace="linked"]').count(), 0, 'Leaving the graph clears the temporary trace');
+    assert.equal(await page.locator('.graph-edge.active').count(), 1, 'The clicked selection retains its own connections');
+    console.log('PASS component hover traces direct neighbours and arrows without mutating selection or mounted graph');
+
+    const memberGraph = await buildChangeGraph({ id: 'member-hover', files: [fixture('members.ts', '', 'class Caller { alpha() { return first() + this.beta(); } beta() { return second(); } }\nfunction first() { return 1; }\nfunction second() { return 2; }\n')] });
+    const memberId = name => memberGraph.symbols.find(symbol => symbol.name === name).id;
+    await page.evaluate(graph => window.dispatchEvent(new MessageEvent('message', { data: { type: 'graph', graph } })), memberGraph);
+    await page.locator(`.node-head[data-symbol="${memberId('Caller')}"]`).hover(); await settle(page);
+    assert.equal(await page.locator('.graph-edge[data-trace="linked"]').count(), 2, 'A class header traces all of its member connections');
+    await page.locator(`.member[data-symbol="${memberId('alpha')}"]`).hover(); await settle(page);
+    assert.equal(await page.locator('.graph-edge[data-trace="linked"]').count(), 1, 'A member traces its own usages, excluding sibling methods');
+    assert.equal(await page.locator(`.node[data-card="${memberId('first')}"]`).getAttribute('data-trace'), 'linked');
+    assert.equal(await page.locator(`.node[data-card="${memberId('second')}"]`).getAttribute('data-trace'), 'unrelated');
+    assert.equal(await page.locator(`.member[data-symbol="${memberId('alpha')}"]`).getAttribute('data-trace'), 'source');
+    assert.equal(await page.locator(`.member[data-symbol="${memberId('first')}"]`).getAttribute('data-trace'), 'linked', 'The specific linked member row is visible in the trace');
+    assert.equal(await page.locator(`.member[data-symbol="${memberId('beta')}"]`).getAttribute('data-trace'), 'linked', 'Usages within the same class highlight the linked member without inventing a cross-card arrow');
+    await page.locator('h1').hover(); await settle(page);
+    assert.equal(await page.locator('.member[data-trace]').count(), 0, 'Member emphasis clears on leaving the graph');
+    console.log('PASS individual member hover excludes sibling usages and highlights the linked rows');
+
+    await page.locator(`.node-head[data-symbol="${memberId('first')}"]`).click();
+    await page.getByRole('button', { name: 'Layout', exact: true }).click();
+    await page.getByLabel('Connections', { exact: true }).selectOption('selected'); await page.keyboard.press('Escape'); await settle(page);
+    const selectedBeforePreview = await page.evaluate(() => window.__state);
+    assert.equal(await page.locator('.graph-edge').first().getAttribute('data-to'), memberId('first'));
+    await page.locator(`.member[data-symbol="${memberId('beta')}"]`).hover(); await settle(page);
+    assert.equal(await page.locator('.graph-edge[data-trace="linked"]').count(), 1, 'Selected-card mode previews the hovered member connections');
+    assert.equal(await page.locator('.graph-edge[data-trace="linked"]').getAttribute('data-to'), memberId('second'));
+    assert.deepEqual(await page.evaluate(() => window.__state), selectedBeforePreview, 'Preview preserves the saved selected-card mode and selection');
+    await page.locator('h1').hover(); await settle(page);
+    assert.equal(await page.locator('.graph-edge').count(), 1);
+    assert.equal(await page.locator('.graph-edge').getAttribute('data-to'), memberId('first'), 'Leaving restores the selected component connections');
+    console.log('PASS selected-card connection mode previews hover and restores the selected routes');
+
+    await page.getByRole('button', { name: 'Layout', exact: true }).click();
+    await page.getByLabel('Layout mode').selectOption('axes'); await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: 'Fit graph', exact: true }).click(); await page.locator('h1').hover();
+    await page.locator(`.node-head[data-symbol="${memberId('Caller')}"]`).focus();
+    await page.keyboard.press('Tab'); await page.keyboard.press('Tab'); await settle(page);
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.symbol), memberId('beta'), 'Keyboard navigation reaches the individual member');
+    assert.equal(await page.locator(`.member[data-symbol="${memberId('beta')}"]`).getAttribute('data-trace'), 'source', 'Keyboard focus provides the same preview as pointer hover');
+    assert.equal(await page.locator('.graph-edge[data-trace="linked"]').getAttribute('data-to'), memberId('second'), 'The preview follows keyboard focus in axes mode');
+    await page.getByLabel('Find a symbol or file').focus(); await settle(page);
+    assert.equal(await page.locator('.node[data-trace="source"]').count(), 0);
+    assert.equal(await page.locator('.graph-edge').getAttribute('data-to'), memberId('first'));
+    console.log('PASS keyboard member previews and focus cleanup in axes mode');
+    await page.evaluate(() => sessionStorage.removeItem('graphState')); await page.reload(); await page.waitForSelector('.node');
+
     assert.equal(await page.getByRole('button', { name: 'Layout', exact: true }).count(), 1, 'Layout is a clearly named toolbar control');
     await page.getByRole('button', { name: 'Layout', exact: true }).click();
     await page.getByLabel('Layout mode').selectOption('axes');
@@ -105,7 +171,7 @@ const settle = page => page.evaluate(() => new Promise(resolve => requestAnimati
     });
     const routes = await checkRoutes();
     assert.equal(routes.length, graph.edges.length, 'All captured cross-card connections are drawn when in view');
-    assert.ok(routes.every(route => route.id && route.arrow === 'url(#graph-arrow)' && !route.overlaps.length), 'Every directed connection runs clear of all actual cards');
+    assert.ok(routes.every(route => route.id && /^url\(#graph-arrow(?:-active)?\)$/.test(route.arrow) && !route.overlaps.length), 'Every directed connection has an arrowhead and runs clear of all actual cards');
     const routeIds = routes.map(route => route.id).sort();
     await page.getByRole('button', { name: 'Layout', exact: true }).click();
     await page.getByRole('button', { name: 'Swap axes', exact: true }).click();
@@ -334,6 +400,13 @@ const settle = page => page.evaluate(() => new Promise(resolve => requestAnimati
       });
       assert.equal(overlaps, 0, 'Connection labels do not cover card contents');
       await page.screenshot({ path: directory + `/${name}.png` });
+      await page.locator(`.node-head[data-symbol="${classId}"]`).hover(); await settle(page);
+      assert.ok(await page.locator('.graph-edge[data-trace="linked"]').count() > 0);
+      const traceColor = await page.locator('.graph-edge[data-trace="linked"]').first().evaluate(node => getComputedStyle(node).color);
+      assert.equal(traceColor, await page.locator('#graph-arrow-active').evaluate(node => getComputedStyle(node).color), 'Hovered paths and arrowheads share the theme highlight');
+      assert.equal(await page.locator(`.node[data-card="${classId}"]`).evaluate(node => getComputedStyle(node).borderColor), traceColor, 'The source outline remains visible in every theme');
+      await page.screenshot({ path: directory + `/${name}-hover.png` });
+      await page.locator('h1').hover(); await settle(page);
     }
     assert.deepEqual(errors, []);
     console.log('PASS four theme classes, readable guides and labels clear of card text');
@@ -362,8 +435,12 @@ const settle = page => page.evaluate(() => new Promise(resolve => requestAnimati
     assert.ok(Date.now() - largeStarted < 3000, 'A sparse 5,000-file layout remains responsive in the browser');
     assert.ok(await page.locator('.node').count() > 0 && await page.locator('.node').count() <= 160, 'Large axes layouts keep a bounded set of full cards mounted');
     assert.ok(await page.locator('.axis-band-label').count() < 100, 'Only visible band labels are mounted');
+    await page.locator('.node-head').first().hover(); await settle(page);
+    assert.equal(await page.locator('.node[data-trace="source"]').count(), 1, 'File overview hover also has a clear source');
+    await page.locator('#search').hover();
     await page.locator('#search').fill('item4999');
     await page.waitForFunction(() => document.querySelector('.node-title')?.textContent === 'item4999');
+    assert.equal(await page.locator('.node[data-trace]').count(), 0, 'Relayout removes the temporary trace from recycled cards');
     assert.deepEqual(errors, []);
     console.log(`PASS controlled 5,000-file overview, bounded guides and search (${Date.now() - largeStarted} ms including search)`);
 

@@ -6,7 +6,7 @@ The first version uses a local bridge and a dependency-free Node.js script. The 
 
 **Try it**
 
-1. In VS Code, run **Extensions: Install from VSIX…** and select `agent-diff-review-0.6.0.vsix` from this project.
+1. In VS Code, run **Extensions: Install from VSIX…** and select `agent-diff-review-0.6.2.vsix` from this project.
 2. Open a trusted Git repository and click the **Agent Diff Review** activity-bar icon. The **Comparison** panel keeps the left and right sources visible above the changed files.
 3. Click **Base · left side** or **Compare · right side** to choose a branch, worktree, or revision. Choose **Exact differences** to compare the selected states directly, or **Branch changes** to see changes introduced on the right since the common ancestor. Use **Swap left and right** beside the source controls, then **Compare** or **Apply Comparison** to update the diff. An unapplied selection leaves the shown comparison clearly labelled. Remote branches reflect the last fetch; **Fetch Remote Branches** updates them explicitly.
 4. Expand folders in **Changes** and open a changed file. The tree uses your VS Code file icon theme, with A/M/D badges for added, modified, and deleted files. Hover in the comment gutter or select lines and use **Agent Diff Review: Comment on Selected Lines** from the editor context menu. **Add Comment** saves a draft. Removed lines can be commented on in the left pane.
@@ -27,11 +27,15 @@ Use **Layout → Axes** to group full cards into labelled bands. Each axis can s
 
 In Layout, set **Connections** to **All** or **Selected card**. Selecting a class includes its members’ incoming and outgoing links. Axes route directed links through gaps between cards, with arrowheads at their targets. The footer reports connection groups in view; the Details lists retain the underlying usages, including off-screen connections. **Escape** closes Layout and returns focus to its button.
 
+Hover a component to emphasise its direct incoming and outgoing neighbours, arrows and relationship labels. Unrelated items recede. Hover a member to trace only its own usages, including linked members within the same class. Keyboard focus provides the same preview. Moving away restores the selected connections and leaves Details unchanged; **Selected card** mode also supports these temporary previews.
+
 Select a card or member to see its full signature, owner, exact location, line counts, **Uses**, and **Used by** in the right sidebar. Follow a related symbol to select it in the graph, or select a relationship to inspect its source, target and call/type-reference location. **Open diff** and **Open usage in diff** open the native diff at the captured lines; removed symbols and usages open the original side. Earlier graph tabs stay pinned to their saved review when another comparison becomes current.
 
 Right-click a component or one of its members and choose **Add Comment** to write feedback without leaving the graph. The native VS Code prompt identifies the captured file, lines and diff side. A component comment covers its full range; a member comment covers only that member. These are ordinary diff comments: opening the saved diff shows the same native thread, and existing feedback on that range is reused.
 
 Comment badges show the number of comments and agent replies beside components and subfunctions. Component totals include member feedback, counted once; each member shows its own conversation. Click a badge to read comments, agent replies, locations and review status in **Comments** within graph Details. Updates arrive live without refreshing the comparison or opening a diff. Resolved feedback stays readable, and long conversations load 20 comments at a time. Graphs keep the comments belonging to their saved snapshot when you reload or change comparisons.
+
+Badge icons distinguish open feedback, agent replies ready for review, needs-changes feedback and fully resolved conversations. Hover for the open count and shared review status; the totals still include resolved comments. Each conversation offers **Go to Comment** to open its exact captured diff location and **Mark as Resolved** or **Reopen Comment** to update the shared native thread without leaving the graph. Keyboard focus stays on the matching action when the status changes.
 
 Use **Add Comment** beside a diff action in Details to open VS Code’s native inline comment editor instead. Symbol comments select the captured symbol’s lines; connection comments target the actual usage. File Details starts a comment at line 1, including text files in Other changes. Removed code uses the original side. Binary and omitted previews have no line-comment action. Both entry points save drafts in the existing **Comments** view; use **Send Review** there to send them to your linked agent. Agent replies appear in the same native threads and Comments view, including feedback from earlier graph snapshots.
 

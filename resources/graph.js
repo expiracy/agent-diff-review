@@ -16,6 +16,8 @@
   let camera = saved.camera || { x: 24, y: 24, zoom: 1 }, frame = 0, searchTimer, dragging, pendingFocus, initialized = false, analysisState = 'loading';
   let restoreRetryFocus = false;
   const mountedCards = new Map();
+  const groupsByCard = new Map(), edgesBySymbol = new Map(), drawnEdges = new Map();
+  let hoveredCard, hoveredSymbol;
   let cardsDirty = true, lastVisibleKey = '';
   const statuses = new Set(saved.statuses || ['added', 'modified', 'deleted']);
   const closedSections = new Set(saved.closedSections || []);
@@ -52,12 +54,18 @@
       badge?.remove(); return;
     }
     const replies = notes.reduce((total, note) => total + note.replies.length, 0);
+    const open = notes.filter(note => !note.resolved);
+    const states = new Map(open.map(note => { const state = feedback.statuses?.[note.id]; return [state?.id, state]; }));
+    const state = ['needsChanges', 'review', 'draft', 'waiting'].map(id => states.get(id)).find(Boolean);
+    const status = open.length ? state?.id || 'open' : 'resolved';
     if (!badge) { badge = button('', () => showGraphComments(kind, id), 'relation-action comment-badge'); anchor.append(badge); }
-    badge.replaceChildren(icon('comment-discussion'), element('span', '', String(notes.length)));
+    badge.dataset.status = status;
+    badge.replaceChildren(icon(status === 'resolved' ? 'pass' : status === 'needsChanges' ? 'warning' : status === 'review' ? 'comment-discussion' : 'comment'), element('span', '', String(notes.length)));
     if (replies) badge.append(icon('reply'), element('span', '', String(replies)));
     const summary = `${notes.length} comment${notes.length === 1 ? '' : 's'}${replies ? ` and ${replies} agent repl${replies === 1 ? 'y' : 'ies'}` : ''}`;
-    badge.title = `${summary} · ${notes.filter(note => !note.resolved).length} open`;
-    badge.setAttribute('aria-label', `Show ${summary} for ${label}`);
+    const statusLabel = `${open.length} open · ${open.length ? state?.label || 'Open' : 'Resolved'}`;
+    badge.title = `${summary} · ${statusLabel}`;
+    badge.setAttribute('aria-label', `Show ${summary} for ${label} · ${statusLabel}`);
   }
   function setFeedback(value, refresh = true) {
     feedback = value || {}; notesById = new Map((feedback.notes || []).map(note => [note.id, note]));
@@ -82,12 +90,16 @@
     let section = byId('graph-comments');
     const active = document.hasFocus() && section?.contains(document.activeElement) ? document.activeElement : null;
     const activeNote = active?.closest('.graph-comment')?.dataset.commentId;
+    const activeAction = active?.dataset.commentAction;
     const activeMore = active?.classList.contains('show-more-comments');
     const panelBounds = context.getBoundingClientRect(), visibleTop = panelBounds.top + (context.querySelector('.context-label')?.offsetHeight || 0);
     const reading = active?.closest('.graph-comment') ?? [...(section?.querySelectorAll('.graph-comment') || [])].find(entry => { const bounds = entry.getBoundingClientRect(); return bounds.bottom > visibleTop && bounds.top < panelBounds.bottom; });
     const readingAnchor = reading ? { id: reading.dataset.commentId, top: reading.getBoundingClientRect().top } : null;
     const notes = selected && ['symbol', 'file'].includes(selected.kind) ? commentsFor(selected.kind, selected.id) : [];
-    if (!notes.length) { section?.remove(); return; }
+    if (!notes.length) {
+      if (active) { const heading = context.querySelector('h2'); if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); context.scrollTop = 0; } }
+      section?.remove(); return;
+    }
     const scrollTop = context.scrollTop;
     if (!section) {
       const body = contextSection('Comments', notes.length); section = body.parentElement; section.id = 'graph-comments';
@@ -101,6 +113,12 @@
       const header = element('div', 'graph-comment-header');
       const state = feedback.statuses?.[note.id];
       header.append(element('strong', '', 'You'), element('span', `comment-status ${state?.id || ''}`, state?.id === 'draft' ? 'Draft' : state?.label || 'Comment'));
+      const actions = element('div', 'graph-comment-actions'); actions.setAttribute('role', 'group'); actions.setAttribute('aria-label', 'Comment actions');
+      const open = button('', () => vscode.postMessage({ action: 'open-comment', id: note.id }), 'relation-action');
+      open.dataset.commentAction = 'open'; open.title = 'Go to Comment'; open.setAttribute('aria-label', open.title); open.append(icon('go-to-file')); actions.append(open);
+      const resolution = button('', () => vscode.postMessage({ action: note.resolved ? 'reopen-comment' : 'resolve-comment', id: note.id }), 'relation-action');
+      resolution.dataset.commentAction = 'resolution'; resolution.title = note.resolved ? 'Reopen Comment' : 'Mark as Resolved'; resolution.setAttribute('aria-label', resolution.title);
+      resolution.append(icon(note.resolved ? 'debug-restart' : 'check')); actions.append(resolution); header.append(actions);
       const location = `${note.filePath}:${note.startLine}${note.endLine === note.startLine ? '' : `–${note.endLine}`} · ${note.side === 'before' ? 'Before' : 'After'} snapshot`;
       entry.append(header, element('div', 'comment-location', location), commentTime(note.createdAt), element('p', 'comment-body', note.body));
       for (const reply of note.replies) {
@@ -113,7 +131,10 @@
     if (notes.length > limit) body.append(button(`Show more comments (${notes.length - limit} remaining)`, () => {
       commentPages.set(key, limit + 20); renderComments(); const next = byId('graph-comments')?.querySelectorAll('.graph-comment')[limit]; next?.focus();
     }, 'link show-more-comments'));
-    if (activeNote) ([...body.querySelectorAll('.graph-comment')].find(entry => entry.dataset.commentId === activeNote) ?? section.querySelector('summary')).focus({ preventScroll: true });
+    if (activeNote) {
+      const entry = [...body.querySelectorAll('.graph-comment')].find(entry => entry.dataset.commentId === activeNote);
+      (activeAction && entry?.querySelector(`[data-comment-action="${activeAction}"]`) || entry || section.querySelector('summary')).focus({ preventScroll: true });
+    }
     else if (activeMore) (body.querySelector('.show-more-comments') ?? section.querySelector('summary')).focus({ preventScroll: true });
     context.scrollTop = scrollTop;
     if (readingAnchor) {
@@ -167,6 +188,7 @@
 
   function rebuild(fit = false) {
     if (!graph) return;
+    hoveredCard = hoveredSymbol = undefined;
     const included = new Set();
     for (const symbol of graph.symbols) if (includedByStatus(symbol) && (!scope || symbol.filePath === scope) && (!query || `${symbol.qualifiedName} ${symbol.filePath}`.toLowerCase().includes(query))) included.add(symbol.id);
     if (byId('related').checked) for (const edge of graph.edges) {
@@ -205,7 +227,11 @@
     }
     cardMap = new Map(cards.map(card => [card.id, card]));
     const groupMap = new Map();
+    edgesBySymbol.clear();
     for (const edge of graph.edges) {
+      for (const id of [edge.source, edge.target]) {
+        const usages = edgesBySymbol.get(id) || new Set(); usages.add(edge); edgesBySymbol.set(id, usages);
+      }
       const source = symbols.get(edge.source), target = symbols.get(edge.target);
       const from = cardMap.has(`file:${source.filePath}`) ? `file:${source.filePath}` : rootFor(source);
       const to = cardMap.has(`file:${target.filePath}`) ? `file:${target.filePath}` : rootFor(target);
@@ -215,6 +241,10 @@
       groupMap.get(key).edges.push(edge);
     }
     groups = [...groupMap.values()];
+    groupsByCard.clear();
+    for (const group of groups) for (const id of [group.from, group.to]) {
+      const connected = groupsByCard.get(id) || new Set(); connected.add(group); groupsByCard.set(id, connected);
+    }
     cardLayer.dataset.dense = String(groups.length > 24);
     for (const group of groups) group.kind = [...new Set(group.edges.map(edge => edge.kind))].join(' / ');
     layout();
@@ -264,6 +294,7 @@
     const focused = pendingFocus ?? active?.symbol ?? (active?.file ? `file:${active.file}` : undefined), focusedEdge = active?.edge;
     if (cardsDirty) { cardLayer.replaceChildren(); mountedCards.clear(); lastVisibleKey = ''; cardsDirty = false; }
     for (const [id, node] of mountedCards) if (!visibleIds.has(id)) { node.remove(); mountedCards.delete(id); }
+    if (hoveredCard && !hoveredCard.isConnected) hoveredCard = hoveredSymbol = undefined;
     for (const card of visible) if (!mountedCards.has(card.id)) { const node = renderCard(card); mountedCards.set(card.id, node); cardLayer.append(node); }
     for (const [id, node] of mountedCards) {
       const card = cardMap.get(id); node.style.left = `${card.x}px`; node.style.top = `${card.y}px`;
@@ -291,13 +322,14 @@
     recovery.textContent = selectionCard() ? 'Show selection' : 'Fit graph';
     recovery.title = selectionCard() ? 'Bring the selected component into view' : 'Bring the graph back into view';
     document.querySelector('footer').dataset.recovery = String(lostView);
-    const visibleKey = `${layoutRevision}:${connectionsMode}:${visible.map(card => card.id).join(',')}:${selected?.kind}:${selected?.id}:${axesLayout ? `${camera.x},${camera.y},${camera.zoom},${viewport.clientWidth},${viewport.clientHeight}` : ''}`;
+    const visibleKey = `${layoutRevision}:${connectionsMode}:${connectionsMode === 'selected' ? `${hoveredCard?.dataset.card}:${hoveredSymbol}` : ''}:${visible.map(card => card.id).join(',')}:${selected?.kind}:${selected?.id}:${axesLayout ? `${camera.x},${camera.y},${camera.zoom},${viewport.clientWidth},${viewport.clientHeight}` : ''}`;
     if (visibleKey !== lastVisibleKey) {
       const inset = contentInsets();
       const connectionIds = axesLayout ? new Set(visible.filter(card => camera.x + (card.x + cardWidth) * camera.zoom > inset.left && camera.x + card.x * camera.zoom < viewport.clientWidth && camera.y + (card.y + card.height) * camera.zoom > inset.top && camera.y + card.y * camera.zoom < viewport.clientHeight).map(card => card.id)) : visibleIds;
       drawEdges(connectionIds); lastVisibleKey = visibleKey;
     }
     if (focusedEdge && document.activeElement?.dataset.edge !== focusedEdge) [...cardLayer.querySelectorAll('[data-edge]')].find(node => node.dataset.edge === focusedEdge)?.focus({ preventScroll: true });
+    updateHighlights();
     if (graph && analysisState === 'ready') byId('status').textContent = `${scope || `${graph.files.length} files`} · ${cards.some(card => card.file) ? 'File overview — select a file to explore' : `${cards.length} components`}${inViewport.length > 160 ? ' · Zoom in to see more components' : ''}${connectionSummary}${lostView ? ' · No components in view' : ''}`;
   }
   function contentInsets() { return layoutMode === 'axes' ? { left: viewport.clientWidth < 500 ? 80 : 112, top: 52 } : { left: 0, top: 0 }; }
@@ -374,13 +406,17 @@
     return container;
   }
   function drawEdges(visible) {
+    drawnEdges.clear();
     svg.replaceChildren(); cardLayer.querySelectorAll('.edge-label').forEach(node => node.remove());
     const ns = 'http://www.w3.org/2000/svg', defs = document.createElementNS(ns, 'defs'), marker = document.createElementNS(ns, 'marker'), arrow = document.createElementNS(ns, 'path');
     marker.id = 'graph-arrow'; marker.setAttribute('viewBox', '0 0 8 8'); marker.setAttribute('refX', '7'); marker.setAttribute('refY', '4'); marker.setAttribute('markerWidth', '8'); marker.setAttribute('markerHeight', '8'); marker.setAttribute('orient', 'auto');
     arrow.setAttribute('d', 'M1 1 L7 4 L1 7'); arrow.setAttribute('fill', 'none'); arrow.setAttribute('stroke', 'currentColor'); marker.append(arrow); defs.append(marker); svg.append(defs);
-    const eligible = connectionsMode === 'selected' ? groups.filter(groupConnected) : groups;
+    const activeMarker = marker.cloneNode(true); activeMarker.id = 'graph-arrow-active';
+    activeMarker.setAttribute('markerUnits', 'userSpaceOnUse'); activeMarker.setAttribute('markerWidth', '11'); activeMarker.setAttribute('markerHeight', '11'); activeMarker.style.color = 'var(--vscode-focusBorder)';
+    activeMarker.firstChild.setAttribute('d', 'M1 1 L7 4 L1 7 Z'); activeMarker.firstChild.setAttribute('fill', 'currentColor'); defs.append(activeMarker);
+    const eligible = connectionsMode === 'selected' ? hoveredCard ? [...hoveredGroups()] : groups.filter(groupConnected) : groups;
     const inView = eligible.filter(group => visible.has(group.from) && visible.has(group.to)).slice(0, 300);
-    connectionSummary = connectionsMode === 'selected' && !selected ? ' · Select a card to show connections' : ` · ${inView.length} of ${eligible.length} connections in view`;
+    connectionSummary = connectionsMode === 'selected' && !selected && !hoveredCard ? ' · Select or hover a card to show connections' : ` · ${inView.length} of ${eligible.length} connections in view`;
     const routes = axesLayout ? GraphLayout.routeAxesConnections(axesLayout, inView.map(group => ({ id: group.edges[0].id, from: group.from, to: group.to }))) : [];
     const routesById = new Map(routes.map(route => [route.id, route.points]));
     for (const group of inView) {
@@ -400,6 +436,45 @@
       label.setAttribute('aria-label', `${symbols.get(group.edges[0].source).qualifiedName} ${group.kind} ${symbols.get(group.edges[0].target).qualifiedName}`);
       label.style.left = `${mid}px`; label.style.top = `${y2 - 12}px`; label.setAttribute('aria-pressed', String(group.edges.some(edge => selected?.kind === 'edge' && selected.id === edge.id))); cardLayer.append(label);
       if (points) placeAxisLabel(label, points);
+      drawnEdges.set(group, { edge, label });
+    }
+  }
+  function setHoveredCard(target) {
+    const next = target instanceof Element ? target.closest('.node') ?? undefined : undefined;
+    const member = next && target.closest('.member-row')?.querySelector('.member')?.dataset.symbol;
+    const symbol = member !== next?.dataset.card ? member : undefined;
+    if (next === hoveredCard && symbol === hoveredSymbol) return;
+    hoveredCard = next; hoveredSymbol = symbol;
+    if (connectionsMode === 'selected') schedule(); else updateHighlights();
+  }
+  function hoveredGroups() {
+    return new Set([...(groupsByCard.get(hoveredCard?.dataset.card) || [])].filter(group => !hoveredSymbol || group.edges.some(edge => edge.source === hoveredSymbol || edge.target === hoveredSymbol)));
+  }
+  function updateHighlights() {
+    if (hoveredCard && !hoveredCard.isConnected) hoveredCard = hoveredSymbol = undefined;
+    const id = hoveredCard?.dataset.card, connected = hoveredGroups(), neighbours = new Set(), linkedSymbols = new Set();
+    const includesMember = edge => !hoveredSymbol || edge.source === hoveredSymbol || edge.target === hoveredSymbol;
+    const addUsage = edge => { linkedSymbols.add(edge.source); linkedSymbols.add(edge.target); };
+    for (const group of connected) {
+      neighbours.add(group.from); neighbours.add(group.to);
+      for (const edge of group.edges) if (includesMember(edge)) addUsage(edge);
+    }
+    if (hoveredSymbol) for (const edge of edgesBySymbol.get(hoveredSymbol) || []) addUsage(edge);
+    for (const [cardId, node] of mountedCards) {
+      if (id) node.dataset.trace = cardId === id ? 'source' : neighbours.has(cardId) ? 'linked' : 'unrelated';
+      else delete node.dataset.trace;
+      node.querySelectorAll('.member').forEach(row => {
+        if (id && row.dataset.symbol === hoveredSymbol) row.dataset.trace = 'source';
+        else if (id && linkedSymbols.has(row.dataset.symbol)) row.dataset.trace = 'linked';
+        else delete row.dataset.trace;
+      });
+    }
+    for (const [group, { edge, label }] of drawnEdges) {
+      const linked = connected.has(group);
+      if (id) { edge.dataset.trace = label.dataset.trace = linked ? 'linked' : 'unrelated'; }
+      else { delete edge.dataset.trace; delete label.dataset.trace; }
+      edge.setAttribute('marker-end', `url(#graph-arrow${linked || !id && groupConnected(group) ? '-active' : ''})`);
+      if (linked) svg.append(edge);
     }
   }
   function groupConnected(group) {
@@ -725,8 +800,13 @@
     if (card) { centerCard(card); pendingFocus = selected?.kind === 'symbol' && (card.id === selected.id || card.members.some(member => member.id === selected.id)) ? selected.id : card.id; persist(); }
     else { fitCamera(); byId('fit').focus({ preventScroll: true }); }
   });
+  cardLayer.addEventListener('pointerover', event => setHoveredCard(event.target));
+  cardLayer.addEventListener('pointerout', event => setHoveredCard(event.relatedTarget));
+  cardLayer.addEventListener('focusout', () => setHoveredCard(undefined));
+  window.addEventListener('blur', () => setHoveredCard(undefined));
   cardLayer.addEventListener('focusin', event => {
     if (!event.target.matches(':focus-visible')) return;
+    setHoveredCard(event.target);
     const rect = event.target.getBoundingClientRect(), view = viewport.getBoundingClientRect(), inset = contentInsets();
     const x = Math.max(0, view.left + inset.left + (inset.left ? 1 : 0) - rect.left), y = Math.max(0, view.top + inset.top + (inset.top ? 1 : 0) - rect.top);
     if (!x && !y) return;

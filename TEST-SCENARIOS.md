@@ -1,5 +1,40 @@
 # First-version scenarios
 
+## Graph conversation actions and badge status — v0.6.2
+
+- [x] Resolve and reopen individual graph comments through the shared native review commands; keep the graph selection, camera and keyboard action focus.
+- [x] Jump from a graph conversation to that comment's exact captured diff side and lines, with snapshot-bound host validation.
+- [x] Distinguish actionable feedback, replies ready for review and fully resolved conversations on component/member badges; retain accurate totals and safe readable replies.
+- [x] Keep hovered/focused badge text readable, and recover visible keyboard focus when the last comment disappears in a narrow editor.
+- [x] Verify creation, agent delivery/reply, resolution, normal-diff synchronisation and saved graph restoration in native VS Code; run graph/Comparison/axes regressions and inspect themes and narrow layouts.
+
+Baseline: existing uncommitted v0.6.1 hover/connection changes are preserved in place (backup `/private/tmp/agent-graph-comments-followup-existing.patch`). Unit suite passes 76/76 and complete browser suites pass. Initial sandboxed runs were blocked by localhost/process permissions; successful baselines used the required access.
+
+Executed results on 25 October 2026:
+
+- **76/76 unit tests pass**, including the real local bridge (`/private/tmp/agent-graph-comments-followup-final-unit.log`). Final compile, JavaScript syntax and diff-whitespace checks pass.
+- Complete graph/Comparison/axes browser suites pass on Chromium **151.0.7922.34** and **124.0.6367.29** (`agent-graph-comments-followup-final-browser{,-124}.log` under `/private/tmp`). Coverage includes exact comment requests, resolve/reopen focus, mixed component/member status, needs-changes priority, replies, safe text, bounded paging, renderer reload with restored conversations/settings, 220px action hit targets, and the existing 10,000-symbol/5,000-file bounds. Inspected comment screenshots in light, dark, both high-contrast themes and narrow layouts under `/private/tmp/agent-graph-comments-followup-webviews`; compatibility screenshots use `-124`.
+- Full native integration passes on VS Code **1.142.0** and pinned minimum **1.94.0**, both exit 0 (`/private/tmp/agent-graph-comments-followup-final-native-{current,194}.log`). This covers component/member creation, native composers, real isolated test-agent delivery/acknowledgements/replies, shared review/Comments/diff state, exact original-side navigation, saved conversations and rejected foreign/missing comment actions with no side effects. Resolving one comment on a shared range leaves the other comment open. The minimum host's known auxiliary shutdown warning follows passing assertions; no real agent received feedback.
+- Canon TDD red/green logs for controls, exact navigation, badge states, hover contrast, and lost/hidden deletion focus use `/private/tmp/agent-graph-comments-followup-*`. The native resolution test needed to await asynchronous graph-tab activation during setup; its state and focus assertions were retained.
+- Packaged and installed **v0.6.2**, 47 archive files / 1.34 MB. Verified 45 extension package files: app resources match source and installation byte for byte; VSCE's expected README link rewriting is accounted for. AGPL metadata/notices and all dependency records remain intact. Logs: `/private/tmp/agent-graph-comments-followup-{package,install}-062.log`.
+
+Hands-on installed VS Code check: reloaded the user's actual window and retained snapshot **22:36**, **17 files / 62 components**, **File × Changed lines**, **Selected card** connections, selected **rootFor** and **81%** zoom. Right-clicked rootFor, saved a uniquely labelled temporary local draft on `resources/graph.js:49–59`, opened its live badge, resolved and reopened it without leaving the graph, and observed matching sidebar counts plus focus on the replacement action. A second native window reload restored the comment, badge, selection, axes and camera. **Go to Comment** selected exactly lines 49–59 in the shared normal-diff thread. Deleted only that temporary draft through native **Delete Draft**, verified zero remaining comments, closed the walkthrough diff and bottom panel, and returned to the original graph view.
+
+Limits: native validation is on macOS; Windows and remote development remain untested. Badge totals include resolved comments and agent replies, rather than representing unread messages.
+
+## Hover connection highlighting
+
+- [x] Hovering a component emphasises direct incoming/outgoing components, arrows and labels; unrelated items recede without changing selection or Details.
+- [x] Individual members trace their own usages; moving away restores the selected connection styles.
+- [x] Hover remains usable in both layouts, selected-card connection mode, keyboard navigation and after viewport changes.
+- [x] Preserve bounded rendering, comments and diff navigation; package/install and verify in VS Code.
+
+Delivered in v0.6.1. Hover uses indexed direct neighbours and updates the mounted cards/paths; it does not recapture, move the camera, change selection or replace Details. Class headers include member usages; individual rows include internal class links. Selected-card mode temporarily previews the hovered/focused item and restores the selected routes on leaving. Arrows use a stronger theme focus colour and matching filled arrowheads.
+
+Validation: 76/76 unit tests pass (`/private/tmp/agent-hover-final-unit.log`). The complete graph/Comparison and axes browser suites pass on Chromium 151.0.7922.34, including four theme classes, class/member/incoming/outgoing traces, keyboard focus, selected-mode restoration, retained DOM/selection, comment and diff workflows, and the existing 10,000-symbol and 5,000-file bounds. The component, member, selected-mode and keyboard assertions each failed before their implementation. Hover screenshots are in `/private/tmp/agent-hover-final-axes`. Native integration passes on VS Code 1.142.0 / Chromium 150.0.7871.250 (`/private/tmp/agent-hover-final-native-verified.log`); two earlier native runs failed at different asynchronous comment-composer assertions. The isolated unchanged HEAD run passed, followed by the final changed run passing without altering those tests. Windows, remote development and the minimum host were not newly checked.
+
+Installed v0.6.1 and reloaded the actual VS Code window. The saved snapshot 22:36, 17 files / 62 components, File × Changed lines axes, selected rootFor and 81% zoom were restored. Native keyboard preview visibly emphasised rootFor, its linked components, purple arrows/arrowheads and usage labels while unrelated cards receded and Details stayed on rootFor. The open Add Comment prompt was empty and dismissed before reloading; no draft text was discarded. Source, VSIX and installed graph resources match byte for byte.
+
 ## Graph comment badges and conversations — v0.6.0
 
 - [x] Show native-style comment/reply badges on components and individual members, with file totals in graph file overviews.
